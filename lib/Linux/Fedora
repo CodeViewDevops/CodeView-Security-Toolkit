@@ -1,0 +1,26 @@
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_irrestrict_su_fedora
+#   DESCRIPTION:  Fix the irrestric use of 'su' command on Fedora.
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+fix_irrestrict_su_fedora () {
+
+  if [ "$LINUX_DISTRO_TOKEN" != "fedora" ]; then
+
+    return 1 #FIXME
+
+  fi
+
+  fix_irrestrict_su_common
+
+  return $? 
+
+}
+
+
+
+
+

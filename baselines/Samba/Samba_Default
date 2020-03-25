@@ -1,0 +1,31 @@
+###Please provide baseline name
+BASE_NAME="Samba FileServer - Default"
+
+###A brief description to clarify details on this baseline is placed here
+BASE_DESCRIPTION="Add a brief description on this baseline here..."
+
+###Please provide a list for all items that must be ignored at all
+BASE_IGNORED=""
+
+###Please provide a list for all items that must be discussed (pending to be analyzed)
+BASE_PENDING_FOR_DISCUSSION=""
+
+###Please provide a list for all items that must be applied only by third party companies or vendors 
+BASE_ITEMS_WITH_DEPENDENCY=""
+
+###Please provide all files that will not be authorized (such as music and videos files)
+BASE_SAMBA_FILES_DENY=""
+
+###Please provide all interfaces to accept connections from
+BASE_SAMBA_IFACES_ALLOW=""
+
+###Please provide the ips that will be allowed or denied (use only one)
+BASE_SAMBA_IPS_ALLOW=""
+BASE_SAMBA_IPS_DENY=""
+
+###Please provide all users or groups that will be authorized to access shares
+BASE_SAMBA_USERS_ALLOW=""
+
+###Please provide all patches that will not be listed as vulnerable (analysis only)
+BASE_MSG_PATCH="" 
+BASE_IGNORE_PATCH=""

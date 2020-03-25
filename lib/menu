@@ -1,0 +1,1155 @@
+
+menu() {
+
+    local val=1
+    local option
+
+    [ -f "$APP_PATH/baselines/baselines.txt" ] && {
+
+        local_hostname=`uname -n`
+        baseline_file_tmp=`awk -v local_hostname=$local_hostname  -F: '( local_hostname == $1 ) { print $2 }' "$APP_PATH/baselines/baselines.txt"`
+
+	[ "$OS" = "SunOS"  ] && [ -n "$baseline_file_tmp" ] && [ "$baseline_set_by_user" = "off" ] && {
+
+		sunos_release_revision=`uname -a | awk '{ print $3 }' | egrep "5\.1."`
+		if [ -n "$sunos_release_revision" ]; then
+
+			baseline_file_tmp="Sun10.$baseline_file_tmp"
+		else
+
+			baseline_file_tmp="Sun.$baseline_file_tmp"
+		fi
+	}
+
+        if [ -n "$baseline_file_tmp" -a "$baseline_set_by_user" = "off" -a -f "$APP_PATH/baselines/$OS/$baseline_file_tmp" ]; then
+
+                baseline="$APP_PATH/baselines/$OS/$baseline_file_tmp"
+                baseline_file="$baseline"
+                baseline_name=`cat "$baseline" | egrep "^[ \t]*BASE_NAME" | awk -F= '{ print $2 }' | sed "s/^\"//g;s/\"$//g"`
+                os_baseline_name="$baseline_name"
+		os_baseline="$baseline_file"
+		. "$baseline"
+        else
+
+                unset baseline_file_tmp local_hostname
+        fi
+    }
+
+    [ -n "$BASE_DESCRIPTION" ] && {
+
+	echo "+-------------------------------------------------------------+"
+	echo " Baseline Description: "
+	echo "+-------------------------------------------------------------+"
+	echo " $BASE_DESCRIPTION" | cut -c-360 | \
+		awk -F" " '{ for (i=1;i<=NF;i++) { printf("%s%s",$i,i%8?" ":"\n") } }'
+	echo
+	echo "+-------------------------------------------------------------+"
+	echo
+    }
+
+    baseline="$os_baseline"
+    if [ -z "$os_baseline_name" ]; then
+
+    	bname="Not Defined"
+    else
+
+    	bname=$os_baseline_name
+    fi
+
+    while [ "$val" -ne "0" ]; do
+
+        echo "Options: "
+        echo "  [1] Choose baseline      ($bname)" 
+        echo "  [2] Set Interactivity    ($interactive)"
+        echo "  [3] Change Log File      ($LOGF)"
+        echo "  [4] Backup               ($BACKUP_DIR)"
+        echo "  [5] Restore Backup       "
+        echo "  [6] Available Routines   "
+        echo "  [7] Ignored Routines     "
+        echo "  [8] Apply Corrections    "
+        echo "  [9] Services             "
+        echo "  [10] Help"
+        echo "  [11] Exit"
+        echo
+        echo_n "Choose option: "
+        read option
+
+        echo "$option" | egrep '^1[0-1]$|^[1-9]$' > /dev/null
+        val=$?
+
+        if [ "$val" -ne "0" ]; then
+
+            echo "Invalid option!"
+        fi
+    done
+
+    return $option
+}
+
+menu_baseline() {
+
+	local base_number
+	local cnt
+	local baselines
+	local base_names
+
+	check_baseline_files
+
+	[ $? -eq 1 ] && return
+
+	echo "Available baselines:"
+	cnt=1
+
+        if [ "$OS" = "SunOS"  ]; then
+
+                sunos_release_revision=`uname -a | awk '{ print $3 }' | egrep "5\.1."`
+                if [ -n "$sunos_release_revision" ]; then
+
+                        baseline_path="$APP_PATH/baselines/$OS/Sun10."
+                else
+
+                        baseline_path="$APP_PATH/baselines/$OS/Sun."
+                fi
+        else
+
+                baseline_path="$APP_PATH/baselines/$OS/"
+        fi
+
+        for baseline in "$baseline_path"*; do
+
+		[ "`basename $baseline`" = "readme.txt" ] && continue;
+		[ -d "$baseline" ] && continue;
+
+		base_name=`sed -n "s/BASE_NAME=\"\(.*\)\"/\1/p" $baseline`
+		baselines[$cnt]=$baseline
+		base_names[$cnt]=$base_name
+		echo "    [$cnt] ${base_name}"
+		cnt=`expr $cnt + 1`
+	done
+
+	echo
+	echo_n "Choose Baseline [0 to return to menu]: "
+
+	read base_number
+
+	baseline_name="${base_names[$base_number]}"
+	baseline="${baselines[$base_number]}"
+	baseline_file="$baseline"
+	os_baseline="$baseline"
+	os_baseline_name="$baseline_name"
+
+	if [ -f "$baseline" ]; then
+
+		. "$baseline"
+		baseline_set_by_user="on"
+	else
+
+		unset BASE_DESCRIPTION
+	fi
+}
+
+menu_baseline_service() {
+
+	local base_number
+	local baseline
+	local cnt
+	local baselines
+	local base_names
+	local service
+
+
+        if [ ! -f "$APP_PATH/lib/Services/$OS/Default" ]; then
+
+                echo "No correction script available for this service."
+                echo "Returning..."
+                return
+        fi
+
+        if [ ! -d "$APP_PATH/baselines/$OS" ]; then
+
+                echo "No baseline available. Wrong Service??"
+                echo "Returning..."
+                return
+        fi
+
+	echo "Available baselines:"
+        cnt=1
+
+        for baseline in "$APP_PATH/baselines/$OS/"*; do
+
+                [ "`basename $baseline`" = "readme.txt" ] && continue;
+                [ -d "$baseline" ] && continue;
+
+                base_name=`sed -n "s/BASE_NAME=\"\(.*\)\"/\1/p" $baseline`
+                baselines[$cnt]=$baseline
+                base_names[$cnt]=$base_name
+                echo "    [$cnt] ${base_name}"
+                cnt=`expr $cnt + 1`
+        done
+
+        echo
+        echo_n "Choose Baseline [0 to return to menu]: "
+
+        read base_number
+
+        service=`echo "$OS" | sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'`
+        eval "${service}BaselineName=\"\${base_names[\$base_number]}\""
+        eval "${service}Baseline=\"\${baselines[\$base_number]}\""
+        baseline_file="${baselines[$base_number]}"
+
+	eval "${service}_baseline_set_by_user=\"on\""
+}
+
+menu_interactivy() {
+
+	if [ "$interactive" = "no" ]; then
+
+		interactive="yes"
+	else
+
+		interactive="no"
+	fi
+}
+
+menu_log() {
+
+	echo_n "Choose log file: "
+	read LOGF
+}
+
+menu_backup() {
+
+	local val
+	local option
+
+	while [ "1" = "1" ]; do
+
+		echo "Backup options: "
+		echo "   [1] Force directory creation       ($forcebackup)"
+		echo "   [2] Choose Backup Directory        ($BACKUP_DIR)"
+		echo "   [3] Back to main menu"
+
+        	echo_n "Choose option: "
+        	read option
+
+        	echo "$option" | egrep '^[1-3]$' > /dev/null
+                val=$?
+                if [ "$val" -ne "0" ]; then
+                        echo "Invalid option!"
+                else
+			case $option in
+				1) if [ "$forcebackup" = "yes" ]; then
+					forcebackup="no"
+				   else
+					forcebackup="yes"
+				   fi
+				;;
+				2) echo_n "Choose Backup Dir: "
+				   read BACKUP_DIR
+				;;
+				3) return
+				;;
+			esac
+		fi
+        done
+}
+
+list_routines() {
+
+	echo "---------------------------"
+	echo " List of available routines"
+	echo "---------------------------"
+
+	for id in ${BASE_IDS}; do
+
+		code=${SUBCODE[$id]}
+		eval item_desc=$`echo NAME_${code}`
+
+		[ -n "$item_desc" ] && {
+
+			echo "$code => $item_desc"
+		}
+	done
+
+	echo
+	echo "Press enter to return to menu"
+	read
+}
+
+list_ignoreds() {
+
+        local IFS=" 
+"
+        local has_ignored=0
+
+        if [ -z "$baseline_name" ]; then
+
+                echo "No baseline defined. Choose a baseline!"
+                echo
+                echo "Press enter to return to menu"
+                read
+
+                return
+        fi
+
+        echo "-------------------------"
+        echo " List of ignored routines"
+        echo "-------------------------------------"
+
+	local ALL_IDS=`sed -n 's/^NAME_\([0-9]\{1,\}\)=.*$/\1/p' $APP_PATH/desc/$OS | tr " " "\n" | sort -u`
+        for id in ${ALL_IDS}; do
+
+		BASE_IGNORED=`echo "$BASE_IGNORED $BASE_PENDING_FOR_DISCUSSION" | tr " " "\n" | sort -u`
+                for ignored in ${BASE_IGNORED}; do
+
+                        [ "$id" = "$ignored" ] && {
+
+                                has_ignored=1
+                                item_desc=`cat $APP_PATH/desc/$OS | egrep "NAME_${id}\=" | cut -d"=" -f2 | sed "s/\"//g"`
+
+                                [ -n "$item_desc" ] && {
+
+                                        echo "[-] ${id} - ${item_desc}"
+                                }
+                        }
+                done
+        done
+
+        if [ "$has_ignored" -eq "0" ]; then
+
+                echo "[+] No ignored routines"
+        fi
+
+        echo
+        echo "Press enter to return to menu"
+        read
+}
+
+list_ignored_service() {
+
+        local IFS=" 
+"
+        local has_ignored=0
+
+        service=`echo $OS | tr "[A-Z]" "[a-z]"`
+        eval "base=\"\$${service}Baseline\""
+
+        if [ -z "$base" ]; then
+
+                echo "No baseline defined. Choose a baseline!"
+                echo
+                echo "Press enter to return to menu"
+                read
+
+                return
+        fi
+
+        echo "-------------------------"
+        echo " List of ignored routines"
+        echo "-------------------------------------"
+
+        . "$baseline_file"
+
+	local ALL_IDS=`sed -n 's/^NAME_\([0-9]\{1,\}\)=.*$/\1/p' $APP_PATH/desc/$OS | tr " " "\n" | sort -u`
+        for id in ${ALL_IDS}; do
+
+		BASE_IGNORED=`echo "$BASE_IGNORED $BASE_PENDING_FOR_DISCUSSION" | tr " " "\n" | sort -u`
+                for ignored in ${BASE_IGNORED}; do
+
+                        [ "$id" = "$ignored" ] && {
+
+                                has_ignored=1
+                                item_desc=`cat $APP_PATH/desc/$OS | egrep "NAME_${id}\=" | cut -d"=" -f2 | sed "s/\"//g"`
+
+                                [ -n "$item_desc" ] && {
+
+                                        echo "[-] ${id} - ${item_desc}"
+                                }
+                        }
+                done
+        done
+
+        if [ "$has_ignored" -eq "0" ]; then
+
+                echo "[+] No ignored routines"
+        fi
+
+	echo
+	echo "Press enter to return to menu"
+	read
+}
+
+
+menu_restore() {
+
+	local service="$1"
+        local val=1
+        local option
+	local service_name
+
+	case "$service" in 
+		"ssh") service_name="SSH "
+		;;
+		"apache") service_name="Apache "
+		;;
+ 		"sendmail") service_name="Sendmail "
+		;;
+		"resin") service_name="Resin "
+		;;
+                "lighttpd") service_name="Lighttpd "
+		;;
+                "postfix") service_name="Postfix "
+                ;;
+	esac
+
+	if [ -z "$baseline_name" ]; then
+		bname="Not Defined"
+	else
+		bname=$baseline_name
+	fi
+
+	while [ "$val" -ne "0" ]; do
+		echo 
+		echo "${service_name}Restore options:  "
+		echo "  [1] Choose Backup Directory        ($backupDirectory)"
+		echo "  [2] Choose Log File                ($backupLogFile)"
+		echo "  [3] Choose Session                 ($sessionDir)"
+		echo "  [4] Restore Session Backup"
+		echo "  [5] Set Interactivity              ($interactiveRestore)"
+		echo "  [6] Show all items to be restored"
+		echo "  [7] Back to main menu"
+      		echo
+		echo_n "Choose option: "
+	        read option
+
+      		echo "$option" | egrep '^[1-7]$' > /dev/null
+	        val=$?
+
+	        if [ "$val" -ne "0" ]; then
+			echo "Invalid option!"
+		fi
+
+	done
+
+	return $option
+}
+
+menu_services() {
+
+	local val=1
+	local option
+	unset BASE_MANUAL_ITEMS
+
+	while [ "$val" -ne "0" ]; do
+		echo 
+		echo "Services: "
+		echo "  [1] Apache      "
+		echo "  [2] SSH         "
+		echo "  [3] Samba       "
+		echo "  [4] Sendmail    "
+		echo "  [5] Resin       "
+                echo "  [6] Lighttpd    "
+                echo "  [7] Postfix     "
+		echo "  [8] Back to main menu"
+		echo 
+
+		echo_n "Choose option: "
+  	read option
+
+    echo "$option" | egrep '^[1-8]$' > /dev/null
+   	val=$?
+
+    if [ "$val" -ne "0" ]; then
+      echo "Invalid option!"
+		fi
+	done
+
+	return $option
+}
+
+menu_resin() {
+
+	local val=1
+	local option
+
+	if [ ! -n "$OLD_BACKUP_DIR" ]; then
+		OLD_BACKUP_DIR=$BACKUP_DIR
+		BACKUP_DIR=$BACKUP_DIR/resin
+	fi
+
+	if [ -z "$resinBaseline" ]; then
+		resinBaselineName="Not Defined"
+	fi
+
+	if [ -z "$resinHome" ]; then
+		showResinHome="Not Defined"
+	else
+		showResinHome="$resinHome"
+	fi
+
+	while [ "$val" -ne "0" ]; do
+		echo 
+		echo "Resin Correction Options: "
+		echo "  [1] Choose baseline            ($resinBaselineName)"
+		echo "  [2] Choose Home Path           ($showResinHome)"
+		echo "  [3] Restore Backup"
+		echo "  [4] Available Routines"
+		echo "  [5] Ignored Routines"
+		echo "  [6] Apply Corrections"
+		echo "  [7] Back to service menu"
+		echo
+
+		echo_n "Choose option: "
+		read option
+	
+		echo "$option" | egrep "^[1-7]$" > /dev/null
+		val=$?
+
+		if [ "$val" -ne "0" ]; then
+			echo "Invalid option!"
+		fi
+	done
+
+	if [ $option -eq 7 ]; then
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}
+
+
+
+menu_ssh() {
+
+	local val=1
+	local option
+
+	if [ ! -n "$OLD_BACKUP_DIR" ]; then
+		OLD_BACKUP_DIR=$BACKUP_DIR
+		BACKUP_DIR=$BACKUP_DIR/ssh
+	fi
+
+        suggested_default_configuration_ssh="/etc/ssh/sshd_config"
+        if [ -f  "$suggested_default_configuration_ssh" ]; then
+
+                showSshFile=$suggested_default_configuration_ssh
+                sshFile="$showSshFile"
+        fi
+
+
+        [ -f "$APP_PATH/baselines/baselines.txt" ] && [ "$ssh_baseline_set_by_user" = "off" ] && {
+
+                local_hostname=`uname -n`
+                baseline_file_tmp=`awk -v local_hostname=$local_hostname  -F: '( local_hostname == $1 ) { print $0 }' "$APP_PATH/baselines/baselines.txt"`
+
+
+                num_of_fields=`echo $baseline_file_tmp | awk -F: ' { print NF }'`
+                start_from="1"
+
+                while [[ "$start_from" -le "$num_of_fields" ]]; do
+
+                        field=`echo "$baseline_file_tmp" | cut -d: -f$start_from | egrep "^ssh"`
+
+                        [ -n "$field" ] && {
+
+                                baseline_file_tmp=`echo "$field" | awk -F= '{ print $2 }'`
+                                break
+                        }
+                        start_from=`expr $start_from \+ 1`
+                done
+
+		if [ -n "$baseline_file_tmp" -a "$ssh_baseline_set_by_user" = "off" -a -f "$APP_PATH/baselines/SSH/$baseline_file_tmp" ]; then
+                
+                	baseline="$APP_PATH/baselines/SSH/$baseline_file_tmp"
+                	baseline_file="$baseline"
+                	baseline_name=`cat "$baseline" | egrep "^[ \t]*BASE_NAME" | awk -F= '{ print $2 }' | sed "s/^\"//g;s/\"$//g"`
+
+                	sshBaseline="$baseline_file"
+                	sshBaselineName="$baseline_name"
+		else
+
+			unset local_hostname baseline_file_tmp
+		fi
+        }
+
+	if [ -z "$sshBaseline" ]; then
+
+		sshBaselineName="Not Defined"
+	fi
+
+	if [ -z "$sshFile" ]; then
+
+		showSshFile="Not Defined"
+	else
+
+		showSshFile="$sshFile"
+	fi
+
+	while [ "$val" -ne "0" ]; do
+
+		echo 
+		echo "SSH Correction Options: "
+		echo "  [1] Choose baseline            ($sshBaselineName)"
+		echo "  [2] Choose Configuration File  ($showSshFile)"
+		echo "  [3] Restore Backup"
+		echo "  [4] Available Routines"
+		echo "  [5] Ignored Routines"
+		echo "  [6] Apply Corrections"
+		echo "  [7] Back to service menu"
+		echo
+
+		echo_n "Choose option: "
+		read option
+	
+		echo "$option" | egrep "^[1-7]$" > /dev/null
+		val=$?
+
+		if [ "$val" -ne "0" ]; then
+
+			echo "Invalid option!"
+		fi
+	done
+
+	if [ $option -eq 7 ]; then
+
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}
+
+menu_samba() {
+
+	local val=1
+	local option
+
+	if [ ! -n "$OLD_BACKUP_DIR" ]; then
+
+		OLD_BACKUP_DIR=$BACKUP_DIR
+		BACKUP_DIR=$BACKUP_DIR/samba
+	fi
+
+        suggested_default_configuration_samba="/etc/samba/smb.conf"
+        if [ -f  "$suggested_default_configuration_samba" ]; then
+
+                showSambaFile=$suggested_default_configuration_samba
+                sambaFile="$showSambaFile"
+        fi
+
+        [ -f "$APP_PATH/baselines/baselines.txt" ] && [ "$samba_baseline_set_by_user" = "off" ] && {
+
+                local_hostname=`uname -n`
+                baseline_file_tmp=`awk -v local_hostname=$local_hostname  -F: '( local_hostname == $1 ) { print $0 }' "$APP_PATH/baselines/baselines.txt"`
+
+                num_of_fields=`echo $baseline_file_tmp | awk -F: ' { print NF }'`
+                start_from="1"
+
+                while [[ "$start_from" -le "$num_of_fields" ]]; do
+
+                        field=`echo "$baseline_file_tmp" | cut -d: -f$start_from | egrep "^samba"`
+
+                        [ -n "$field" ] && {
+
+                                baseline_file_tmp=`echo "$field" | awk -F= '{ print $2 }'`
+                                break
+                        }
+                        start_from=`expr $start_from \+ 1`
+                done
+
+                if [ -n "$baseline_file_tmp" -a "$samba_baseline_set_by_user" = "off" -a -f "$APP_PATH/baselines/Samba/$baseline_file_tmp" ]; then
+
+                        baseline="$APP_PATH/baselines/Samba/$baseline_file_tmp"
+                        baseline_file="$baseline"
+                        baseline_name=`cat "$baseline" | egrep "^[ \t]*BASE_NAME" | awk -F= '{ print $2 }' | sed "s/^\"//g;s/\"$//g"`
+
+                        sambaBaseline="$baseline_file"
+                        sambaBaselineName="$baseline_name"
+                else
+
+                        unset local_hostname baseline_file_tmp
+                fi
+        }
+
+	if [ -z "$sambaBaseline" ]; then
+
+		sambaBaselineName="Not Defined"
+	fi
+
+	if [ -z "$sambaFile" ]; then
+
+		showSambaFile="Not Defined"
+	else
+
+		showSambaFile="$sambaFile"
+	fi
+
+	while [ "$val" -ne "0" ]; do
+
+		echo 
+		echo "Samba Correction Options: "
+		echo "  [1] Choose baseline            ($sambaBaselineName)"
+		echo "  [2] Choose Configuration File  ($showSambaFile)"
+		echo "  [3] Restore Backup"
+		echo "  [4] Available Routines"
+		echo "  [5] Ignored Routines"
+		echo "  [6] Apply Corrections"
+		echo "  [7] Back to service menu"
+		echo
+
+		echo_n "Choose option: "
+		read option
+	
+		echo "$option" | egrep "^[1-7]$" > /dev/null
+		val=$?
+
+		if [ "$val" -ne "0" ]; then
+
+			echo "Invalid option!"
+		fi
+	done
+
+	if [ $option -eq 7 ]; then
+
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}
+
+menu_lighttpd() {
+
+	local val=1
+	local option
+
+	if [ ! -n "$OLD_BACKUP_DIR" ]; then
+		OLD_BACKUP_DIR=$BACKUP_DIR
+		BACKUP_DIR=$BACKUP_DIR/lighttpd
+	fi
+
+	if [ -z "$lighttpdBaseline" ]; then
+		lighttpdBaselineName="Not Defined"
+	fi
+
+	if [ -z "$lighttpdHome" ]; then
+		showLighttpdHome="Not Defined"
+	else
+		showLighttpdHome="$lighttpdHome"
+	fi
+
+	while [ "$val" -ne "0" ]; do
+		echo 
+		echo "Lighttpd Correction Options: "
+		echo "  [1] Choose baseline            ($lighttpdBaselineName)"
+		echo "  [2] Choose Home Path           ($showLighttpdHome)"
+		echo "  [3] Restore Backup"
+		echo "  [4] Available Routines"
+		echo "  [5] Ignored Routines"
+		echo "  [6] Apply Corrections"
+		echo "  [7] Back to service menu"
+		echo
+
+		echo_n "Choose option: "
+		read option
+	
+		echo "$option" | egrep "^[1-7]$" > /dev/null
+		val=$?
+
+		if [ "$val" -ne "0" ]; then
+			echo "Invalid option!"
+		fi
+	done
+
+	if [ $option -eq 7 ]; then
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}
+
+menu_postfix() {
+
+	local val=1
+	local option
+
+	if [ ! -n "$OLD_BACKUP_DIR" ]; then
+
+		OLD_BACKUP_DIR=$BACKUP_DIR
+		BACKUP_DIR=$BACKUP_DIR/postfix
+	fi
+
+        [ -f "$APP_PATH/baselines/baselines.txt" ] && [ "$postfix_baseline_set_by_user" = "off" ] && {
+
+                local_hostname=`uname -n`
+                baseline_file_tmp=`awk -v local_hostname=$local_hostname  -F: '( local_hostname == $1 ) { print $0 }' "$APP_PATH/baselines/baselines.txt"`
+
+                num_of_fields=`echo $baseline_file_tmp | awk -F: ' { print NF }'`
+                start_from="1"
+
+                while [[ "$start_from" -le "$num_of_fields" ]]; do
+
+                        field=`echo "$baseline_file_tmp" | cut -d: -f$start_from | egrep "^postfix"`
+
+                        [ -n "$field" ] && {
+
+                                baseline_file_tmp=`echo "$field" | awk -F= '{ print $2 }'`
+                                break
+                        }
+                        start_from=`expr $start_from \+ 1`
+                done
+
+                if [ -n "$baseline_file_tmp" -a "$postfix_baseline_set_by_user" = "off" -a -f "$APP_PATH/baselines/Postfix/$baseline_file_tmp" ]; then
+
+                        baseline="$APP_PATH/baselines/Postfix/$baseline_file_tmp"
+                        baseline_file="$baseline"
+                        baseline_name=`cat "$baseline" | egrep "^[ \t]*BASE_NAME" | awk -F= '{ print $2 }' | sed "s/^\"//g;s/\"$//g"`
+
+                        postfixBaseline="$baseline_file"
+                        postfixBaselineName="$baseline_name"
+                else
+
+                        unset local_hostname baseline_file_tmp
+                fi
+        }
+
+	if [ -z "$postfixBaseline" ]; then
+
+		postfixBaselineName="Not Defined"
+	fi
+
+	if [ -z "$postfixHome" ]; then
+
+		showPostfixHome="Not Defined"
+	else
+
+		showPostfixHome="$postfixHome"
+	fi
+
+	while [ "$val" -ne "0" ]; do
+
+		echo 
+		echo "Postfix Correction Options: "
+		echo "  [1] Choose baseline            ($postfixBaselineName)"
+		echo "  [2] Choose Binary Files Path    ($showPostfixHome)"
+		echo "  [3] Restore Backup"
+		echo "  [4] Available Routines"
+		echo "  [5] Ignored Routines"
+		echo "  [6] Apply Corrections"
+		echo "  [7] Back to service menu"
+		echo
+
+		echo_n "Choose option: "
+		read option
+	
+		echo "$option" | egrep "^[1-7]$" > /dev/null
+		val=$?
+
+		if [ "$val" -ne "0" ]; then
+
+			echo "Invalid option!"
+		fi
+	done
+
+	if [ $option -eq 7 ]; then
+
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}
+
+menu_file_resin() {
+
+	echo_n "Choose resin home path: "
+	read resinHome
+}
+
+menu_file_lighttpd() {
+
+	echo_n "Choose lighttpd home path: "
+	read lighttpdHome
+}
+
+menu_file_postfix() {
+
+	echo_n "Choose postfix home path: "
+	read postfixHome
+}
+
+menu_file_ssh() {
+
+	echo_n "Choose file configuration: "
+	read sshFile
+}
+
+menu_file_apache() {
+
+        echo_n "Choose file configuration: "
+        read apacheFile
+}
+
+menu_file_samba() {
+
+	echo_n "Choose file configuration: "
+	read sambaFile
+}
+
+menu_file_sendmail() {
+
+	echo_n "Choose file configuration: "
+	read sendmailFile
+}
+ 
+
+menu_log_backup() {
+
+	echo_n "Choose log file: "
+	read backupLogFile
+}
+
+menu_directory_backup() {
+
+	echo_n "Choose directory backup: "
+	read backupDirectory
+}
+
+list_sessions() {
+
+	local cnt=1
+
+	# check if it hast any session available
+        DIROK=0
+        SESSIONS=""
+
+        for dir in $backupDirectory/*; do
+                dirname=${dir##*/}
+                expr "$dirname" : '[-:[:digit:]]\{17\}' > /dev/null 2>&1 && {
+                        SESSIONS="$dirname $SESSIONS"
+                        DIROK=1
+                }
+        done
+
+        [ "$DIROK" = "1" ] || {
+                echo "[-] No restore data found in \"$backupDirectory\""
+                echo "[-] Returning..."
+                return 1
+        }
+
+	for session in $SESSIONS; do
+                [ -d "$session" ] && continue;
+
+                session_array[$cnt]="$session"
+                echo "    [$cnt] ${session}"
+                cnt=`expr $cnt + 1`
+        done
+
+        echo
+        echo_n "Choose Session [0 to return to menu]: "
+	read session_number
+
+	sessionDir="${session_array[$session_number]}"
+}
+
+menu_apache() {
+
+        local val=1
+        local option
+
+		if [ ! -n "$OLD_BACKUP_DIR" ]; then
+			OLD_BACKUP_DIR=$BACKUP_DIR
+			BACKUP_DIR=$BACKUP_DIR/apache
+
+		fi
+
+
+        suggested_default_configuration_apache="/etc/httpd/httpd.conf"
+        if [ -f  "$suggested_default_configuration_apache" ]; then
+
+                showApacheFile=$suggested_default_configuration_apache
+                apacheFile="$showApacheFile"
+        fi
+
+        [ -f "$APP_PATH/baselines/baselines.txt" ] && [ "$apache_baseline_set_by_user" = "off" ] && {
+
+                local_hostname=`uname -n`
+                baseline_file_tmp=`awk -v local_hostname=$local_hostname  -F: '( local_hostname == $1 ) { print $0 }' "$APP_PATH/baselines/baselines.txt"`
+
+                num_of_fields=`echo $baseline_file_tmp | awk -F: ' { print NF }'`
+                start_from="1"
+
+                while [[ "$start_from" -le "$num_of_fields" ]]; do
+
+                        field=`echo "$baseline_file_tmp" | cut -d: -f$start_from | egrep "^apache"`
+
+                        [ -n "$field" ] && {
+
+                                baseline_file_tmp=`echo "$field" | awk -F= '{ print $2 }'`
+                                break
+                        }
+                        start_from=`expr $start_from \+ 1`
+                done
+
+                if [ -n "$baseline_file_tmp" -a "$apache_baseline_set_by_user" = "off" -a -f "$APP_PATH/baselines/Apache/$baseline_file_tmp" ]; then
+
+                        baseline="$APP_PATH/baselines/Apache/$baseline_file_tmp"
+                        baseline_file="$baseline"
+                        baseline_name=`cat "$baseline" | egrep "^[ \t]*BASE_NAME" | awk -F= '{ print $2 }' | sed "s/^\"//g;s/\"$//g"`
+
+                        apacheBaseline="$baseline_file"
+                        apacheBaselineName="$baseline_name"
+                else
+
+                        unset local_hostname baseline_file_tmp
+                fi
+        }
+
+        if [ -z "$apacheBaseline" ]; then
+
+                apacheBaselineName="Not Defined"
+        fi
+
+        if [ -z "$apacheFile" ]; then
+
+                showApacheFile="Not Defined"
+        else
+
+                showApacheFile="$apacheFile"
+        fi
+
+        while [ "$val" -ne "0" ]; do
+
+                echo
+                echo "Apache Correction Options: "
+                echo "  [1] Choose baseline            ($apacheBaselineName)"
+                echo "  [2] Choose Configuration File  ($showApacheFile)"
+		echo "  [3] Restore Backup"
+                echo "  [4] Available Routines"
+                echo "  [5] Ignored Routines"
+                echo "  [6] Apply Corrections"
+                echo "  [7] Back to service menu"
+                echo
+
+                echo_n "Choose option: "
+                read option
+
+                echo "$option" | egrep "^[1-7]$" > /dev/null
+                val=$?
+
+                if [ "$val" -ne "0" ]; then
+
+                        echo "Invalid option!"
+                fi
+        done
+
+	if [ $option -eq 7 ]; then
+
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}
+
+menu_sendmail() {
+
+	local val=1
+	local option
+
+	if [ ! -n "$OLD_BACKUP_DIR" ]; then
+
+		OLD_BACKUP_DIR=$BACKUP_DIR
+		BACKUP_DIR=$BACKUP_DIR/sendmail
+	fi
+
+
+        suggested_default_configuration_sendmail="/etc/mail/sendmail.cf"
+        if [ -f  "$suggested_default_configuration_sendmail" ]; then
+
+                showSendmailFile=$suggested_default_configuration_sendmail
+                sendmailFile="$showSendmailFile"
+        fi
+
+        [ -f "$APP_PATH/baselines/baselines.txt" ] && [ "$sendmail_baseline_set_by_user" = "off" ] && {
+
+                local_hostname=`uname -n`
+                baseline_file_tmp=`awk -v local_hostname=$local_hostname  -F: '( local_hostname == $1 ) { print $0 }' "$APP_PATH/baselines/baselines.txt"`
+
+                num_of_fields=`echo $baseline_file_tmp | awk -F: ' { print NF }'`
+                start_from="1"
+
+                while [[ "$start_from" -le "$num_of_fields" ]]; do
+
+                        field=`echo "$baseline_file_tmp" | cut -d: -f$start_from | egrep "^sendmail"`
+
+                        [ -n "$field" ] && {
+
+                                baseline_file_tmp=`echo "$field" | awk -F= '{ print $2 }'`
+                                break
+                        }
+                        start_from=`expr $start_from \+ 1`
+                done
+
+                if [ -n "$baseline_file_tmp" -a "$sendmail_baseline_set_by_user" = "off" -a -f "$APP_PATH/baselines/Sendmail/$baseline_file_tmp" ]; then
+
+                        baseline="$APP_PATH/baselines/Sendmail/$baseline_file_tmp"
+                        baseline_file="$baseline"
+                        baseline_name=`cat "$baseline" | egrep "^[ \t]*BASE_NAME" | awk -F= '{ print $2 }' | sed "s/^\"//g;s/\"$//g"`
+
+                        sendmailBaseline="$baseline_file"
+                        sendmailBaselineName="$baseline_name"
+                else
+
+                        unset local_hostname baseline_file_tmp
+                fi
+        }
+
+	if [ -z "$sendmailBaseline" ]; then
+
+		sendmailBaselineName="Not Defined"
+	fi
+
+	if [ -z "$sendmailFile" ]; then
+
+		showSendmailFile="Not Defined"
+	else
+
+		showSendmailFile="$sendmailFile"
+	fi
+
+	while [ "$val" -ne "0" ]; do
+
+		echo 
+		echo "Sendmail Correction Options: "
+		echo "  [1] Choose baseline            ($sendmailBaselineName)"
+		echo "  [2] Choose Configuration File  ($sendmailFile)"
+		echo "  [3] Restore Backup"
+		echo "  [4] Available Routines"
+		echo "  [5] Ignored Routines"
+		echo "  [6] Apply Corrections"
+		echo "  [7] Back to service menu"
+		echo
+
+		echo_n "Choose option: "
+		read option
+	
+		echo "$option" | egrep "^[1-7]$" > /dev/null
+		val=$?
+
+		if [ "$val" -ne "0" ]; then
+
+			echo "Invalid option!"
+		fi
+	done
+
+	if [ $option -eq 7 ]; then
+
+		BACKUP_DIR=$OLD_BACKUP_DIR
+		unset OLD_BACKUP_DIR
+	fi
+
+	return $option
+}

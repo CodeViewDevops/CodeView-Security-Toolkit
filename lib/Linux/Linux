@@ -1,0 +1,141 @@
+#
+# descobre e chama o script de cada distribuicao
+
+. "$APP_PATH/lib/$OS/Default"
+
+LINUX_DISTRO_TOKEN="" #identify a linux distro
+
+#===  FUNCTION  ================================================================
+#          NAME:  find_linux_distro
+#   DESCRIPTION:  Look for the linux distribution
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+find_linux_distro () {
+
+	distro=""
+	version=""
+
+	files="fedora-release
+	       yellowdog-release
+		   SuSe-release
+		   SuSE-release
+		   conectiva-release 
+	       mandrake-release
+		   mandrakelinux-release
+		   redhat-release
+		   redhat-version 
+		   gentoo-release
+		   debian_release
+		   debian_version
+		   slackware-version 
+		   slackware-release
+		   conectiva-vers*o"
+
+	for file_name in $files; do
+
+		file_path="/etc/${file_name}"
+
+		if [ -s $file_path ]; then
+
+			distro=`echo $file_name | sed -n 's/^\([a-zA-Z]*\).*$/\1/p'`
+
+			case $distro in
+
+				"fedora")
+				  LINUX_DISTRO_TOKEN="fedora"
+					distro=`sed -n 's/^\(.*\) release.*/\1/p' $file_path`
+					version=`sed -n 's/.*release \([[:digit:]+]\.\?[[:digit:]*]\?\).*/\1/p' $file_path`
+					. "$APP_PATH/lib/$OS/Fedora"
+					break
+					;;
+
+				"yellowdog")
+
+				  LINUX_DISTRO_TOKEN="yellowdog"
+					distro=`sed -n 's/^\(.*\) release.*/\1/p' $file_path`
+					version=`sed -n 's/.*release \([[:digit:]+]\.\?[[:digit:]*]\?\).*/\1/p' $file_path`
+					. "$APP_PATH/lib/$OS/Fedora"
+					break
+					;;
+
+				"redhat")
+				   
+				  LINUX_DISTRO_TOKEN="redhat"
+					distro=`sed -n 's/^\(.*\) release.*/\1/p' $file_path`
+					version=`sed -n 's/.*release \([[:digit:]+]\.\?[[:digit:]*]\?\).*/\1/p' $file_path`
+					. "$APP_PATH/lib/$OS/RedHat"
+					break
+					;;
+
+				"debian")
+
+				  LINUX_DISTRO_TOKEN="debian"
+					version=`cat $file_path`
+					. "$APP_PATH/lib/$OS/Debian"
+					break
+					;;
+
+				"conectiva")
+
+				  LINUX_DISTRO_TOKEN="conectiva"
+					distro=""
+					version=`cat $file_path`
+					;;
+
+				"SuSe"|"SuSE")
+
+				  LINUX_DISTRO_TOKEN="suse"
+
+					version=`sed -n 's/^VERSION[[:space:]]*=[[:space:]]*\([[:digit:]+]\.\?[[:digit:]*]\).*/\1/p' $file_path`
+					. "$APP_PATH/lib/$OS/Suse"
+					;;
+
+				"mandrake"|"mandrakelinux")
+
+				  LINUX_DISTRO_TOKEN="mandrake"
+					distro=`sed -n 's/^\(.*\) release.*/\1/p' $file_path`
+					version=`cat version`
+					break
+					;;
+
+				"slackware")
+
+				  LINUX_DISTRO_TOKEN="slackware"
+					version=`sed -n 's/^[[:alpha:]]* \(.*\)$/\1/p' $file_path`
+					. "$APP_PATH/lib/$OS/Slackware"
+					break
+					;;
+
+				"gentoo")
+
+				  LINUX_DISTRO_TOKEN="gentoo"
+					version=`sed -n 's/^.* version \(.*\)/\1/p' $file_path`
+					break
+					;;
+
+				*) return 1 ;;
+
+			esac
+
+
+		fi
+
+	done # -- end of for --
+
+	distro_name="`echo $distro | sed "s/^\([a-z]\)/\U\1/"` $version"
+	distro_name="`echo $distro_name | sed 's/[ ]*$//'`"
+
+#	LINUX_DISTRO_TOKEN=`echo $distro | sed "s/\([A-Z]\{1,\}\)/\L\1/g"`
+
+    #Compatibility with current Baseline Application Script
+	DISTRO=$distro_name
+	SO=$distro
+
+	return 0
+
+}
+
+unalias -a
+find_linux_distro

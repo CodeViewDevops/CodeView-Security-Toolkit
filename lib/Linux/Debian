@@ -1,0 +1,21 @@
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_irrestrict_su_debian
+#   DESCRIPTION:  Fix the irrestric use of 'su' command on Debian.
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+fix_irrestrict_su_debian () {
+
+  if [ "$LINUX_DISTRO_TOKEN" != "debian" ]; then
+
+    return $CODE_ERROR #FIXME
+
+  fi
+
+  fix_irrestrict_su_common
+
+  return $? 
+
+}

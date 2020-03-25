@@ -1,0 +1,33 @@
+###Please provide baseline name
+BASE_NAME="SSH (OpenSSH/SunSSH) - Default"
+
+###A brief description to clarify details on this baseline is placed here
+BASE_DESCRIPTION="Add a brief description on this baseline here..."
+
+###Please provide a list for all items that must be ignored at all
+BASE_IGNORED=""
+
+###Please provide a list for all items that must be discussed (pending to be analyzed)
+BASE_PENDING_FOR_DISCUSSION=""
+
+###Please provide a list for all items that must be applied only by third party companies or vendors 
+BASE_ITEMS_WITH_DEPENDENCY=""
+
+###Please provide the maximum number of simultaneos connections (valid only for authentication phase)
+BASE_MAXSTARTUPS="5"
+
+###Please provide the maximum number of chances for new attempts (valid only for authentication phase)
+BASE_MAXAUTHTRIES="3"
+
+###Please provide all users that will be authorized to log in the system
+BASE_ALLOW_USERS=""
+
+###Please provide the message to include in report (analysis only)
+BASE_MSG_SSHDCONF="" 
+
+###Please provide all patches that will not be listed as vulnerable (analysis only)
+BASE_MSG_PATCH="" 
+BASE_IGNORE_PATCH=""
+
+###Please provide the maximum time before expiring inactive sessions 
+BASE_CLIENT_ALIVE_INTERVAL="900"

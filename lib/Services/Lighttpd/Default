@@ -1,0 +1,107 @@
+#NAME[8000]="Evitar listagem de diretórios"
+#NAME[8001]="Não disponibilização de informações"
+#NAME[8002]="Solicitar / Gerar certificados e configurar o lighttpd para uso de SSL" - Não Existe Correção
+#NAME[8003]="Incluir restrições para acesso a extensões"
+
+BASE_IDS="1 2 3 4"
+
+SUBCODE[1]="8200"
+apply_1() {
+    lighttpdFile="$lighttpdHome/lighttpd.conf"
+    # Checking if the file exist
+    [ -f "$lighttpdFile" ] || {
+        MISSED_FILE="$lighttpdFile"
+        return $CODE_MISSED_FILE
+    }
+
+    # Need correction?
+    local need_correction
+
+    # Analyzing
+    check_dir_listing_lighttpd "$lighttpdFile"
+    case $? in
+        0) return $CODE_ERROR
+        ;;
+        1) need_correction=1
+        ;;
+        2) return $CODE_OK
+        ;;
+    esac
+
+    # Fixing
+    [ $need_correction -eq 1 ] && {
+        backupFile "$lighttpdFile" "data"
+        sed -i 's/\(^\ *server\.dir-listing\ *=\ *\).*/\1"disabled"/g' $lighttpdFile
+    }
+    return $CODE_OK
+}
+
+SUBCODE[2]="8201"
+apply_2() {
+    lighttpdFile="$lighttpdHome/lighttpd.conf"
+    # Checking if the file exist
+    [ -f "$lighttpdFile" ] || {
+        MISSED_FILE="$lighttpdFile"
+        return $CODE_MISSED_FILE
+    }
+
+    # Need correction?
+    local need_correction
+
+    # Analyzing
+    check_server_tag_lighttpd "$lighttpdFile"
+    case $? in
+        0) return $CODE_ERROR
+        ;;
+        1) need_correction=1
+        ;;
+        2) return $CODE_OK
+        ;;
+    esac
+
+    # Fixing
+    [ $need_correction -eq 1 ] && {
+        backupFile "$lighttpdFile" "data"
+        sed -i '/^\ *\(s\|S\)erver.tag/d' "$lighttpdFile"
+    }
+
+    return $CODE_OK
+}
+
+SUBCODE[3]="8202"
+apply_3() {
+    #Não Existe Correção
+    return $CODE_OK
+}
+
+SUBCODE[4]="8203"
+apply_4() {
+    lighttpdFile="$lighttpdHome/lighttpd.conf"
+    # Checking if the file exist
+    [ -f "$lighttpdFile" ] || {
+        MISSED_FILE="$lighttpdFile"
+        return $CODE_MISSED_FILE
+    }
+
+    # Need correction?
+    local need_correction
+
+    # Analyzing
+    check_bak_old_files_lighttpd "$lighttpdFile"
+    case $? in
+        0) return $CODE_ERROR
+        ;;
+        1) need_correction=1
+        ;;
+        2) return $CODE_OK
+        ;;
+    esac
+
+    # Fixing
+    [ $need_correction -eq 1 ] && {
+        backupFile "$lighttpdFile" "data"
+        sed -i 's/\(^\ *url\.access-deny\ *=\ *(\)\(.*\))/\1"old", "bak",\2)/' "$lighttpdFile"
+    }
+
+    return $CODE_OK
+}

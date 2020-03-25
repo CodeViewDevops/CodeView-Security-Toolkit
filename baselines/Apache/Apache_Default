@@ -1,0 +1,35 @@
+###Please provide baseline name
+BASE_NAME="Apache WebServer - Default"
+
+###A brief description to clarify details on this baseline is placed here
+BASE_DESCRIPTION="Add a brief description on this baseline here..."
+
+###Please provide a list for all items that must be ignored at all
+BASE_IGNORED=""
+
+###Please provide a list for all items that must be discussed (pending to be analyzed)
+BASE_PENDING_FOR_DISCUSSION=""
+
+###Please provide a list for all items that must be applied only by third party companies or vendors 
+BASE_ITEMS_WITH_DEPENDENCY=""
+
+###Please provide any apache's users
+BASE_USER_APACHE="
+apache
+www
+nobody
+"
+
+###Please provide any apache's groups
+BASE_GROUP_APACHE="
+apache
+www
+nobody
+"
+
+###Please provide the message to include in report (analysis only)
+BASE_MSG_APACHECONF=""
+
+###Please provide all patches that will not be listed as vulnerable (analysis only)
+BASE_MSG_PATCH=""
+BASE_IGNORE_PATCH=""

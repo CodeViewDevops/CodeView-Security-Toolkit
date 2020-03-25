@@ -1,0 +1,98 @@
+#===  FUNCTION  ================================================================
+#          NAME:  fix_irrestrict_su_suse
+#   DESCRIPTION:  Fix the irrestric use of 'su' command on Suse.
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+fix_irrestrict_su_suse () {
+
+	if [ "$LINUX_DISTRO_TOKEN" != "suse" ]; then
+
+		return 1 #FIXME
+
+	fi
+
+	fix_irrestrict_su_common
+
+	return $? 
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_password_history_suse
+#   DESCRIPTION:  Fix the password history on suse.
+#    PARAMETERS:  $1 = password history number.
+#       RETURNS:  0 = success ; 1 = failure  ; 77 = baseline definiton not found
+#===============================================================================
+
+fix_password_history_suse () {
+
+  [ -z "$BASE_PASS_HIST" ] && {
+    MISSED_VAR="BASE_PASS_HIST"
+    return $CODE_MISSED_VAR
+  }
+
+	file="/etc/pam.d/common-password" 
+
+  [ -f "$file" ] || {
+    MISSED_FILE="$file"
+    return $CODE_MISSED_FILE
+  }
+
+	regex="password[ \t]\{1,\}required[ \t]\{1,\}pam_pwcheck.so[ \t]\{1,\}nullok"
+	line=`sed -n "/${regex}/p" $file 2>> "$LOGF"`
+
+	backupFile "$file" "data"
+
+	if [ -z "$line" ]; then
+
+	  echo "password required pam_pwcheck.so nullok remember=${BASE_PASS_HIST}" >> $file
+
+	else 
+
+		tmp_file=`mktemp /tmp/correction.XXXXXX 2>> "$LOGF"`
+		sed "s/\(${regex}\)/\1\tremember=${BASE_PASS_HIST}/" $file > $tmp_file 2>> "$LOGF"
+		cat $tmp_file > $file 2>> "$LOGF"
+		rm $tmp_file 2>> "$LOGF"
+
+	fi
+
+	return $CODE_OK 
+
+}
+
+# According to old detection distro code in CD/lib/lib/Linux this code will never be executed
+
+SUBCODE[6]="3031"
+apply_6() { 
+
+	[ -z "$BASE_CRON_ALLOW" ] && {
+
+		MISSED_VAR="BASE_CRON_ALLOW"
+		return "$CODE_MISSED_VAR"
+	}
+
+	new_releases=`cat /etc/SuSE-release | egrep "S[uU][sS][eE] Linux Enterprise Server 1[1-2]"`
+
+	if [ -z "$new_releases" ]; then
+
+	    local file=/var/spool/cron/allow
+	    [ -n "$BASE_CRON_ALLOW" ] || return 22
+	    local cronContent=""
+
+	    backupFile "$file" "data"
+	    for user in $BASE_CRON_ALLOW; do
+        cronContent="$user
+$cronContent"
+	    done
+    
+	    setContent "$file" "$cronContent"
+	    return
+
+	else
+
+		fix_cron
+		return
+	fi
+}   

@@ -1,0 +1,94 @@
+#===  FUNCTION  ================================================================
+#          NAME:  fix_irrestrict_su_slackware
+#   DESCRIPTION:  Fix the irrestric use of 'su' command on Slackware.
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+fix_irrestrict_su_slackware () {
+
+	if [ "$LINUX_DISTRO_TOKEN" != "slackware" ]; then
+
+		return 1 #FIXME
+
+	fi
+
+	fix_irrestrict_su_common
+
+	return $?
+}
+
+
+#SUBCODE[19]="3005"
+#apply_19() {
+#	local directory=/etc/rc.d/"
+#	local ret=22
+#
+#        if [ -n "$BASE_INETD_ALLOW" ]; then
+#		for service in `ls $directory/rc.*`; do
+#			# executable ?
+#			if [ -x "$service" ]; then
+#				accept=0
+#				svcName=`basename "$service" | sed 's/rc.//'`
+#
+#				for allowed in $BASE_INETD_ALLOW; do
+#					if [ "$allowed" = "$service" ]; then
+#						accept=1
+#						break
+#					fi
+#				done
+#
+#				# stop the service! maledeto :)
+#				if [ "$accept" = "0" ]; then
+#					backupFile "$service" perm "$service start"
+#
+#					"$service" stop
+#					chmod -x "$service"
+#					ret=0
+#				fi
+#			fi
+#
+#			return $ret;
+#		done
+#	fi
+#
+#	if [ -n "$BASE_INETD_DENY" ]; then
+#		for service in $BASE_INETD_DENY; do
+#			file="$directory/rc.$service"
+#		
+#			if [ -x "$file" ]; then
+#				backupFile "$file" perm "$file start"
+#
+#				"$file" stop
+#				chmod -x "$file"
+#				ret=0
+#			fi
+#		done
+#
+#		return $ret
+#	fi
+#}
+
+#SUBCODE[29]="3083"
+#apply_29() {
+#	local var=SU_WHEEL_ONLY
+#	local file=/etc/login.defs
+#	local group=/etc/group
+#
+#	[ -n "$BASE_SU_USERS" ] || {
+#		MISSED_VAR="BASE_SU_USERS"
+#		return 33
+#	}
+#
+#	backupFile "$file" data
+#        setLine "$file" "^[[:blank:]]*$var=NO" "$var=YES"
+#
+#	backupFile "$group" data
+#
+#	for user in $BASE_SU_USERS; do
+#				
+#	done
+#		
+#	return
+#}
+

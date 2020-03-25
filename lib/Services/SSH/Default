@@ -1,0 +1,638 @@
+BASE_IDS="1 2 3 4 6 7 8 9 10 11 12 13 14 15"
+SSH_VERSION=""
+SSH_VERSION_NUMBER=""
+SSH_CONFIG_FILE=""
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  ssh_version
+#   DESCRIPTION:  Retrieve the ssh version and associate the result to 
+#		  SSH_VERSION and SSH_VERSION_NUMBER global variables.
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+
+ssh_version () {
+
+	[ -n "$SSH_VERSION" ] && [ -n "$SSH_VERSION_NUMBER" ] && return "$CODE_CONFORMITY"
+
+	ssh_bin=`which ssh`
+
+	[ -z "$ssh_bin" ] && return 1
+
+	ssh_version=`$ssh_bin -V 2>&1 | sed -n 's/\(Sun_SSH_1.1\).*/\1/p'`
+	[ -n "$ssh_version" ] && ssh_version_number=`$ssh_version | sed -n 's/Sun_SSH_\([0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p'`
+
+	[ -z "$ssh_version" ] && {
+
+		ssh_version=`$ssh_bin -V 2>&1 | sed -n -e "s/^OpenSSH_\([0-9\.p]\{1,\}\).*$/\1/p"`
+		[ -n "$ssh_version" ] && ssh_version_number=`echo $ssh_version | sed -n -e 's/^\([0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p'`
+
+	}
+
+	SSH_VERSION=$ssh_version
+	SSH_VERSION_NUMBER=$ssh_version_number
+
+	return "$CODE_CONFORMITY"
+
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  ssh_find_config_file
+#   DESCRIPTION:  Look for sshd_config on /etc, /etc/ssh and /usr/local/ssh and
+#   			  if the file is found, associate with SSH_CONFIG_FILE global
+#   			  variable.
+#
+#                 WARNING - For Baseline Application Scripts the $sshFile must
+#                 be use instead of this function. 
+#
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+
+ssh_find_config_file () {
+
+	directories="/etc/ssh /usr/local/ssh /etc"
+	file="sshd_config"
+
+	for dir in $directories; do
+
+		if [ -d "$dir" ] && [ -f "$dir/$file" ]; then
+
+			SSH_CONFIG_FILE="$dir/$file"
+			return 0
+
+		fi
+
+	done
+
+	#sshd_config not found
+	return 1
+
+}
+
+SUBCODE[1]="6101"
+apply_1() {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "PermitRootLogin[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] || [ "$test" != "no" ] && {
+
+		backupFile "$sshFile" "data"
+		setLine "$sshFile" "^[ \t]*PermitRootLogin[ \t]*" "PermitRootLogin no"
+		
+		return
+	}
+
+	return "$CODE_CONFORMITY"
+}
+
+SUBCODE[2]="6102"
+apply_2() {
+
+	# Versions under 4.0 must use RhostsAuthentication option instead of RSAAuthentication
+        ssh_version
+        compare_versions "$SSH_VERSION_NUMBER" "4.0"
+	local backup_test="0"
+	local vulnerable="0"
+
+	if [ $? -eq 70 ]; then
+       
+		auth="RhostsAuthentication"
+        else
+
+		auth="RSAAuthentication"
+        fi
+
+	local ignore_rhosts_test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*IgnoreRhosts[ \t]+.+" | awk '{ print $2 }'`
+	local rhosts_authentication_test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*${auth}[ \t]+.+" | awk '{ print $2 }'`
+	local rhosts_rsa_authentication_test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*RhostsRSAAuthentication[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$ignore_rhosts_test" ] || [ "$ignore_rhosts_test" != "yes" ] && {
+		
+		backupFile "$sshFile" "data"
+		backup_test="1"
+		setLine "$sshFile" "^[ \t]*IgnoreRhosts[ \t]*" "IgnoreRhosts yes"
+		vulnerable="1"
+	}
+
+	[ -z "$rhosts_authentication_test" ] || [ "$rhosts_authentication_test" != "no" ] && {
+		
+		[ "$backup_test" = "0" ] && { 
+
+			backupFile "$sshFile" "data"
+			backup_test="1"
+		}
+		setLine "$sshFile" "^[ \t]*${auth}[ \t]*" "${auth} no"
+		vulnerable="1"
+	}
+
+	[ -z "$rhosts_rsa_authentication_test" ] || [ "$rhosts_rsa_authentication_test" != "no" ] && {
+		
+		[ "$backup_test" = "0" ] && { 
+
+			backupFile "$sshFile" "data"
+			backup_test="1"
+		}
+		setLine "$sshFile" "^[ \t]*RhostsRSAAuthentication[ \t]*" "RhostsRSAAuthentication no"
+		vulnerable="1"
+	}
+
+	if [ "$vulnerable" = "1" ]; then
+
+		return 0
+	else
+
+		return "$CODE_CONFORMITY"
+	fi
+}
+
+SUBCODE[3]="6103"
+apply_3() {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*Protocol[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] || [ "$test" != "2" ] && {
+
+		backupFile "$sshFile" "data"
+
+		setLine "$sshFile" "^[ \t]*Protocol[ \t]*" "Protocol 2"
+		return
+	}
+
+	return "$CODE_CONFORMITY"
+}
+
+SUBCODE[4]="6104"
+apply_4() {
+
+	ssh_version
+
+	#This option is not supported on Solaris SSH 1.1
+	[ "$SSH_VERSION" = "Sun_SSH_1.1" ] && return 22
+
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*UsePrivilegeSeparation[ \t]+.+" | awk '{ print $2 }'`
+	
+	[ -z "$test" ] || [ "$test" != "no" ] && {
+
+		backupFile "$sshFile" "data"
+		setLine "$sshFile" "^[ \t]*UsePrivilegeSeparation[ \t]*" "UsePrivilegeSeparation yes"
+
+		return
+	}
+	
+	return "$CODE_CONFORMITY"
+}
+
+SUBCODE[6]="6107"
+apply_6() {
+	
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*PermitEmptyPasswords[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] || [ "$test" != "no" ] && {
+
+		backupFile "$sshFile" "data"
+		setLine "$sshFile" "^[ \t]*PermitEmptyPasswords[ \t]*" "PermitEmptyPasswords no"
+		return
+	}
+
+	return "$CODE_CONFORMITY"
+}
+
+SUBCODE[7]="6108"
+apply_7() {
+
+	ssh_version
+	local vulnerable="0"
+	local backup_test="0"
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*SyslogFacility[ \t]+.+" | awk '{ print $2 }'`
+
+	os_token_test=`uname`
+	if [ "$os_token_test" = "SunOS" ] || [ "$os_token_test" = "HP-UX" ] || [ "$os_token_test" = "AIX" ]; then
+		
+		syslog_facility="AUTH"
+	else
+
+		syslog_facility="AUTHPRIV"
+	fi
+
+
+	apply_syslogfacility() {
+
+		syslog_facility_arg="$1"
+
+		tmp_file=`mktemp /tmp/correction.XXXXXX`
+
+		if [ -n "$test" ]; then
+
+			if [ "$test" != "$syslog_facility" ]; then
+
+				backupFile "$sshFile" "data"
+				backup_test="1"
+				sed "s/^\($BLANK_SED\{0,\}SyslogFacility$BLANK_SED\{1,\}\).\{0,\}/\1 $syslog_facility_arg/" $sshFile > $tmp_file 
+				cat $tmp_file > $sshFile
+				vulnerable="1"
+			fi
+		else
+
+			backupFile "$sshFile" "data"
+			backup_test="1"
+			echo "SyslogFacility $syslog_facility_arg" >> $sshFile
+			vulnerable="1"
+		fi
+	}
+	apply_syslogfacility "$syslog_facility"
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*LogLevel[ \t]+.+" | awk '{ print $2 }'`
+	[ -z "$test" ] || [ "$test" != "INFO" ] && {
+
+		tmp_file=`mktemp /tmp/correction.XXXXXX`
+
+		if [ -n "$test" ]; then
+	
+			[ "$backup_test" = "0" ] && {
+				backupFile "$sshFile" "data"
+			}
+			sed "s/^\($BLANK_SED\{0,\}LogLevel$BLANK_SED\{1,\}\).*/\1 INFO/" $sshFile > $tmp_file 
+			cat $tmp_file > $sshFile
+			vulnerable="1"
+		else
+
+			[ "$backup_test" = "0" ] && {
+				backupFile "$sshFile" "data"
+			}
+			echo "LogLevel INFO" >> $sshFile
+			vulnerable="1"
+		fi
+
+		rm $tmp_file 2> /dev/null
+	}
+
+	if [ "$vulnerable" = "1" ]; then
+
+		return 0
+	else
+
+		return "$CODE_CONFORMITY"
+	fi
+}
+
+SUBCODE[8]="6109"
+apply_8() {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*AllowUsers[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] && {
+
+		[ -z "$BASE_ALLOW_USERS" ] && {
+
+			MISSED_VAR="BASE_ALLOW_USERS"
+			return 33;
+		}
+
+		backupFile "$sshFile" "data"
+		setLine "$sshFile" "^[ \t]*AllowUsers" "AllowUsers $BASE_ALLOW_USERS"
+	}
+
+	return "$CODE_CONFORMITY"
+}
+
+SUBCODE[9]="6110"
+apply_9() {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*(TCP)?KeepAlive[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] || [ "$test" = "no" ] && {
+
+      		[ "$TCPKeepAlive" = "yes" ] && return 22
+
+		backupFile "$sshFile" "data"
+		ssh_version
+
+		# Versions under 3.7 must use KeepAlive option instead of TCPKeepAlive
+		compare_versions "$SSH_VERSION_NUMBER" "3.7"
+
+		if [ $? -eq 70 -o "$SSH_VERSION" = "Sun_SSH_1.1" ]; then
+
+		    	tmp_file=`mktemp /tmp/correction.XXXXXX`
+		    	has_keepalive=`sed -n "/^$BLANK_SED\{0,\}KeepAlive/p" $sshFile`
+
+		    	if [ -n "$has_keepalive" ]; then
+
+		      		sed "s/^\($BLANK_SED\{0,\}KeepAlive\{1,\}\).\{0,\}/\1 yes/" $sshFile > $tmp_file 
+		      		cat $tmp_file > $sshFile
+				return ${CODE_OK}
+
+		    	else
+
+		      		echo "KeepAlive yes" >> $sshFile
+				return ${CODE_OK}
+
+		    	fi
+    
+				if [ -f "$tmp_file"]; then
+			    		rm $tmp_file
+		    		fi
+
+  		else
+
+			tmp_file=`mktemp /tmp/correction.XXXXXX`
+			has_tcpkeepalive=`sed -n "/^$BLANK_SED\{0,\}TCPKeepAlive/p" $sshFile`
+
+			if [ -n "$has_tcpkeepalive" ]; then
+
+				sed "s/^\($BLANK_SED\{0,\}TCPKeepAlive$BLANK_SED\{1,\}\).\{0,\}/\1 yes/" $sshFile > $tmp_file 
+				cat $tmp_file > $sshFile
+				#chmod +r $sshFile
+				return ${CODE_OK}
+			else
+
+				echo "TCPKeepAlive yes" >> $sshFile
+				return ${CODE_OK}
+
+    			fi
+
+
+			# setLine "$sshFile" "^ *# *TCPKeepAlive *(no|yes)" "TCPKeepAlive yes"
+			if [ -f "$tmp_file"]; then
+
+				rm $tmp_file
+			fi
+
+		fi
+	}
+
+	return "$CODE_CONFORMITY"
+}
+
+SUBNAME[10]="Specify the Servers' IP"
+SUBCODE[10]="6105"
+apply_10() {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*ListenAddress[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] || [ "$test" = "0.0.0.0" ] && {
+
+		backupFile "$sshFile" "data"
+
+		tmp_file=`mktemp /tmp/correction.XXXXXX`
+		#deleting old server ips
+		sed "/^[ \t]\{0,\}ListenAddress/d" $sshFile > $tmp_file
+
+		ips_ok=1
+
+	  if [ "`uname`"  = "HP-UX" ]; then
+	    interfaces=`lanscan -i`
+	    for iface in $interfaces; do
+	      ip=`ifconfig $iface | sed -n "s/.\{0,\}inet$BLANK_SED[addr:]\{0,\}\([0-9\.]\{1,\}\).\{0,\}/\1/p" |grep -v "127.0.0.1"`
+	      ips="$ips $ip" 
+	    done
+	  else
+		  ips=`ifconfig -a | sed -n "s/.\{0,\}inet$BLANK_SED[addr:]\{0,\}\([0-9\.]\{1,\}\).\{0,\}/\1/p" |grep -v "127.0.0.1"`
+		fi
+  
+
+		while [ $ips_ok -ne 0 ]; do
+			echo "  [+] The follow interfaces are configured on this machine:"
+			for ip in $ips; do
+	
+				echo "    [+] ${ip}"
+	
+			done
+			echo "  [+] Type one or more (blank space separated) ip adresses to address"
+			echo -n "  [+] the ssh server ips (i.e.: 200.253.251.3 192.168.0.15):"
+
+			read server_ips
+
+			found=1
+			for server_ip in $server_ips; do
+				for ip in $ips; do
+	
+					if [ "$ip" = "$server_ip" ]; then
+	
+						found=0
+						continue 2
+	
+					else
+	
+						found=1
+	
+					fi
+	
+				done
+	
+				if [ $found -eq 1 ]; then
+	
+					echo ""
+					echo "  [-] One or more addresses not found: ${server_ips}."
+					echo ""
+					ips_ok=1
+					break
+	
+				fi
+	
+			done
+	
+			if [ $found -eq 0 ]; then
+	
+				ips_ok=0
+	
+			fi
+	
+		done
+
+		server_ips=`echo "$server_ips" | tr " " "\n" | sort -u`	
+		for server_ip in ${server_ips}; do
+		
+			echo "ListenAddress ${server_ip}" >> $tmp_file
+		done
+
+		cat $tmp_file >  $sshFile
+		rm $tmp_file 2> /dev/null
+
+		return ${CODE_OK}
+	}
+
+	return ${CODE_CONFORMITY}
+}
+	
+SUBNAME[11]="Banner disabled"
+SUBCODE[11]="6112"
+apply_11 () {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*Banner[ \t]+.+" | awk '{ print $2 }'`
+
+	[ -z "$test" ] || [ "$test" = "none" ] && {
+
+		banner_file="/etc/motd"
+		[ -f $banner_file ] || return 1
+
+		backupFile "$sshFile" "data"
+		tmp_file=`mktemp /tmp/correction.XXXXXX`
+
+		#deleting previous banner definitions
+		sed "/^$BLANK_SED\{0,\}Banner/d" $sshFile > $tmp_file
+
+		#adding banner
+		echo "Banner /etc/motd" >> $tmp_file
+
+		cat $tmp_file > $sshFile
+		rm $tmp_file 2> /dev/null
+
+		return
+	}
+
+	return $CODE_CONFORMITY
+}
+
+SUBNAME[12]="StrictMode disabled"
+SUBCODE[12]="6113"
+apply_12 () {
+
+	local test=`cat $sshFile | egrep -v "^[ \t]*#|^[ \t]*$" | egrep "^[ \t]*StrictModes[ \t]+yes"`
+
+	[ -z "$test" ] && {
+
+		backupFile "$sshFile" "data"
+		tmp_file=`mktemp /tmp/correction.XXXXXX`
+
+		#deleting previous StrictMode definitions
+		sed "/^$BLANK_SED\{0,\}StrictModes/d" $sshFile > $tmp_file
+
+		#adding configuration
+		echo "StrictModes yes" >> $tmp_file
+		cat $tmp_file > $sshFile
+		rm $tmp_file 2> /dev/null
+
+		return
+	}
+
+	return $CODE_CONFORMITY
+
+}
+
+SUBNAME[13]="Set MaxStartups"
+SUBCODE[13]="6127"
+apply_13 () {
+
+	[ -z "$BASE_MAXSTARTUPS" ] && {
+
+		MISSED_VAR="BASE_MAXSTARTUPS"
+		return 33;
+	}
+
+	tmp_file=`mktemp /tmp/correction.XXXXXX`
+	
+	max_startups=`grep "^[ \t]*MaxStartups" $sshFile | awk '{ print $2 }' | awk -F: '{ print $1 }'`
+
+	# Se MaxStartups nao existir, sera criado
+	[ -z "$max_startups" ] && {
+
+		backupFile "$sshFile" "data"
+		echo "MaxStartups $BASE_MAXSTARTUPS" >> $tmp_file
+		cat $tmp_file >> $sshFile
+		rm $tmp_file 2> /dev/null
+		return
+	}	
+
+	# Se MaxStartups existir e nao for igual ao default, sera modificado
+	[ $max_startups != $BASE_MAXSTARTUPS ] && {
+	
+		backupFile "$sshFile" "data"
+		sed "/^$BLANK_SED\{0,\}MaxStartups/d" $sshFile > $tmp_file
+		echo  "MaxStartups $BASE_MAXSTARTUPS" >> $tmp_file		
+		cat $tmp_file > $sshFile
+		rm $tmp_file 2> /dev/null
+		return 
+	}
+
+	rm $tmp_file 2> /dev/null
+
+	return "$CODE_CONFORMITY"
+}
+
+SUBNAME[14]="Set MaxAuthTries"
+SUBCODE[14]="6118"
+apply_14 () {
+
+        [ -z "$BASE_MAXAUTHTRIES" ] && {
+
+		MISSED_VAR="BASE_MAXAUTHTRIES"
+                return 33;
+        }
+
+        tmp_file=`mktemp /tmp/correction.XXXXXX`
+
+        max_authtries=`egrep "^[ \t]*MaxAuthTries" $sshFile | awk '{ print $2 }'`
+
+        # Se MaxAuthTries nao existir, sera criado
+        [ -z "$max_authtries" ] && {
+
+        	backupFile "$sshFile" "data"
+                echo "MaxAuthTries $BASE_MAXAUTHTRIES" >> $tmp_file
+                cat $tmp_file >> $sshFile
+                rm $tmp_file 2> /dev/null
+
+                return
+        }
+
+        # Se MaxAuthTries existir e for maior q o sugerido, sera modificado
+        [ "$max_authtries" -gt "$BASE_MAXAUTHTRIES" ] && {
+
+        	backupFile "$sshFile" "data"
+                sed "/^$BLANK_SED\{0,\}MaxAUthTries/d" $sshFile > $tmp_file
+                echo  "MaxAuthTries $BASE_MAXAUTHTRIES" >> $tmp_file
+                cat $tmp_file > $sshFile
+                rm $tmp_file 2> /dev/null
+
+		return
+        }
+
+        rm $tmp_file 2> /dev/null
+	return $CODE_CONFORMITY
+}
+
+
+SUBNAME[15]="MACs"
+SUBCODE[15]="6130"
+apply_15 () {
+
+	# there are many other good algorithms, however they might not be compatible on legacy versions and systems
+	good_algorithms='hmac-sha1 hmac-ripemd160'
+        algorithms=`cat "$sshFile" | awk ' $1 ~ /^[[:blank:]]*MACs/ { $1=""; print $0 }' | tr ',' ' ' | tr ' ' '\n' | sort -u`
+	vuln_item='false'
+
+	if [ -n "$algorithms" ]; then
+		
+		# algorithms with 96bits or based on md5 are vulnerable
+		curr_conf=`echo "$algorithms" | tr ' ' '\n' | egrep "\-96|md5"`
+		if [ "$curr_conf" ]; then
+
+			vuln_item='true'
+			fixed_conf=`echo "$algorithms" | tr ' ' '\n' | egrep -v "\-96|md5"`
+			fixed_conf=`echo "$fixed_conf $good_algorithms" | tr ' ' '\n' | sort -u`
+			fixed_conf=`echo "$fixed_conf" | tr '\n' ',' | sed -e 's/^[,]//g' -e 's/[,]$//g'`
+			
+			backupFile "$sshFile" "data"
+			tmp_file=`mktemp /tmp/correction.XXXXXX`
+			cat "$sshFile" | sed "s/^[ \t]\{0,\}MACs.*/MACs $fixed_conf/g" > "$tmp_file"
+			cat "$tmp_file" > "$sshFile"
+			rm -f "$tmp_file"
+		else
+
+			vuln_item='false'
+		fi
+	else
+
+		vuln_item='true'
+		backupFile "$sshFile" "data"
+		good_algorithms=`echo "$good_algorithms" | tr ' ' ','`
+		echo "MACs $good_algorithms" >> "$sshFile"
+	fi
+
+	[ "$vuln_item" = 'true' ] && return ${CODE_OK}
+	return ${CODE_CONFORMITY}
+}

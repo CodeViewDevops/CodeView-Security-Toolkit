@@ -1,0 +1,691 @@
+
+BASE_IDS="2 3 4 5 6 7 8 9"
+
+#===  FUNCTION  ================================================================
+#          NAME:  samba_list_sections
+#   DESCRIPTION:  Prints on screen section names.
+#    PARAMETERS:  $1 -> samba configuration file absolute path
+#                 $2 -> section name filter (must user grep pattern syntax)
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+samba_list_sections () {
+
+  [ $# -lt 1 ] && return $CODE_ERROR
+
+  _smb_file=$1
+  _filter=$2
+
+  if [ -z "$_filter" ]; then
+    sed -n "s:^[ \t]\{0,\}\[\(.\{1,\}\)\]$:\1:p"  $_smb_file
+  else
+    sections=`sed -n "s:^[ \t]\{0,\}\[\(.\{1,\}\)\]$:\1:p" $_smb_file`
+    for section in $sections; do
+      found=1
+      for filter in $_filter; do
+        [ "$filter" = "$section" ] && {
+          found=0
+          break
+        }
+      done
+
+      [ $found -eq 1 ] && echo "${section}"
+    done
+
+  fi
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  samba_show_section
+#   DESCRIPTION:  Prints on screen all configurations in a samba section.
+#    PARAMETERS:  $1 -> samba configuration file absolute path
+#                 $2 -> section name
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+samba_show_section () {
+
+  [ $# -lt 2 ] && return $CODE_ERROR
+
+  _smb_file=$1
+  _section_name=$2
+  
+  $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_get_section.awk -v SECTION="$_section_name" $_smb_file 2>> "$LOGF"
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  samba_show_section_parameter
+#   DESCRIPTION:  Prints on screen the value of a paramenter inside a specific 
+#                 samba section.
+#    PARAMETERS:  $1 -> samba configuration file absolute path
+#                 $2 -> section name
+#                 $3 -> parameter (must use sed pattern syntax)
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+samba_show_section_parameter () {
+
+  [ $# -lt 3 ] && return $CODE_ERROR
+
+  _smb_file=$1
+  _section_name=$2
+  _parameter=$3
+
+  _section=`samba_show_section "$_smb_file" "$_section_name"`
+
+  [ -z "$_section" ] && return $CODE_ERROR
+
+  printf "%s\n" "$_section" | sed -n "s/^[ \t]\{0,\}${_parameter}[ \t]\{0,\}=[ \t]\{0,\}\(.\{1,\}\)$/\1/p" | sed "s/[ \t]\{1,\}$//g" 2>> "$LOGF"
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_2
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[2]="7102"
+apply_2() {
+
+  [ -z "$BASE_SAMBA_IPS_ALLOW" ] && [ -z "$BASE_SAMBA_IPS_DENY" ] && {
+    MISSED_VAR="BASE_SAMBA_IPS_ALLOW OR BASE_SAMBA_IPS_DENY"
+    return $CODE_MISSED_VAR
+  }  
+
+  [ -z "$sambaFile" ] && {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  [ -n "$BASE_SAMBA_IPS_ALLOW" ] && {
+    _hosts_allow=`samba_show_section_parameter "$sambaFile" "global" "hosts[ \t]\{1,\}allow" 2>> "$LOGF"`
+
+    in_accordance=0
+    if [ -z "$_hosts_allow" ]; then
+      in_accordance=1
+    else
+      #If the number os hosts configured on samba file configuration is different than baseline definition,
+      #it needs to be fixed.
+      n_hosts=`printf "%s\n" "$_hosts_allow" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+      n_base_hosts=`printf "%s\n" "$BASE_SAMBA_IPS_ALLOW" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+
+      if [ "$n_base_hosts" -ne "$n_hosts" ]; then
+        in_accordance=1
+      else
+        #Checking if all hosts configured on samba file configuration are in accordance with baseline.
+        for host in $_hosts_allow; do
+          found=1
+          for base_host in $BASE_SAMBA_IPS_ALLOW; do
+            [ "$base_host" = "$host" ] && {
+              found=0
+              break
+            }
+          done
+
+          [ $found -eq 1 ] && {
+            in_accordance=1
+            break
+          }
+        done
+      fi
+    fi
+  }
+
+  [ -n "$BASE_SAMBA_IPS_DENY" ] && {
+
+    [ -z "$in_accordance" ] && in_accordance=0
+
+    _hosts_deny=`samba_show_section_parameter "$sambaFile" "global" "hosts[ \t]\{1,\}deny" 2>> "$LOGF"`
+
+    if [ -z "$_hosts_deny" ]; then
+      in_accordance=1
+    else
+      #If the number os hosts configured on samba file configuration is different than baseline definition,
+      #it needs to be fixed.
+      n_hosts=`printf "%s\n" "$_hosts_deny" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+      n_base_hosts=`printf "%s\n" "$BASE_SAMBA_IPS_DENY" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+
+      if [ "$n_base_hosts" -ne "$n_hosts" ]; then
+        in_accordance=1
+      else
+        #Checking if all hosts configured on samba file configuration are in accordance with baseline.
+        for host in $_hosts_deny; do
+          found=1
+          for base_host in $BASE_SAMBA_IPS_DENY; do
+            [ "$base_host" = "$host" ] && {
+              found=0
+              break
+            }
+          done
+
+          [ $found -eq 1 ] && {
+            in_accordance=1
+            break
+          }
+        done
+      fi
+    fi
+  }
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile "$sambaFile" "data"
+
+  [ -n "$BASE_SAMBA_IPS_ALLOW" ] && {
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+    if [ -z "$_hosts_allow" ]; then
+      [ $verbosity ] && echo "    Adding 'hosts allow' option" 
+      echo "    Adding 'hosts allow' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="hosts allow = $BASE_SAMBA_IPS_ALLOW" $sambaFile > $tmp_file 2>> "$LOGF"
+    else
+      [ $verbosity ] && echo "    Updating 'hosts allow' option" 
+      echo "    Updating 'hosts allow' option" >> "$LOGF"
+
+      sed "s:^\([ \t]\{0,\}hosts allow[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1${BASE_SAMBA_IPS_ALLOW}:" $sambaFile > $tmp_file 2>> "$LOGF"
+    fi
+    cat $tmp_file > $sambaFile
+    rm $tmp_file
+  }
+
+  [ -n "$BASE_SAMBA_IPS_DENY" ] && {
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX`
+    if [ -z "$_hosts_deny" ]; then
+      [ $verbosity ] && echo "    Adding 'hosts deny' option" 
+      echo "    Adding 'hosts deny' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="hosts deny = $BASE_SAMBA_IPS_DENY" $sambaFile > $tmp_file 2>> "$LOGF"
+    else
+      [ $verbosity ] && echo "    Updating 'hosts deny' option" 
+      echo "    Updating 'hosts deny' option" >> "$LOGF"
+
+      sed "s:^\([ \t]\{0,\}hosts deny[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1${BASE_SAMBA_IPS_DENY}:" $sambaFile > $tmp_file 2>> "$LOGF"
+    fi
+    cat $tmp_file > $sambaFile 2>> "$LOGF"
+    rm $tmp_file 2>> "$LOGF"
+  }
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_3
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[3]="7103"
+apply_3() {
+  
+  [ -z "$BASE_SAMBA_USERS_ALLOW" ] && {
+    MISSED_VAR="BASE_SAMBA_USERS_ALLOW"
+    return $CODE_MISSED_VAR
+  }
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  _users=`samba_show_section_parameter "$sambaFile" "global" "valid[ \t]\{1,\}users" 2>> "$LOGF"`
+
+  in_accordance=0
+  if [ -z "$_users" ]; then
+    in_accordance=1
+  else
+    #If the number os users configured on samba file configuration is different than baseline definition,
+    #it needs to be fixed.
+    n_users=`printf "%s\n" "$_users" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+    n_base_users=`printf "%s\n" "$BASE_SAMBA_USERS_ALLOW" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+
+    if [ "$n_base_users" -ne "$n_users" ]; then
+      in_accordance=1
+    else
+      #Checking if all users configured on samba file configuration are in accordance with baseline.
+      for user in $_users; do
+        found=1
+        for base_user in $BASE_SAMBA_USERS_ALLOW; do
+          [ "$base_user" = "$user" ] && {
+            found=0
+            break
+          }
+        done
+
+        [ $found -eq 1 ] && {
+          in_accordance=1
+          break
+        }
+      done
+    fi
+  fi
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile "$sambaFile" "data"
+
+  tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+  if [ -z "$_users" ]; then
+    $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="valid users = $BASE_SAMBA_USERS_ALLOW" $sambaFile > $tmp_file 2>> "$LOGF"
+  else
+    sed "s:^\([ \t]\{0,\}valid users[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1${BASE_SAMBA_USERS_ALLOW}:" $sambaFile > $tmp_file 2>> "$LOGF"
+  fi
+  cat $tmp_file > $sambaFile 2>> "$LOGF"
+  rm $tmp_file 2>> "$LOGF"
+
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_4
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[4]="7104"
+apply_4() {
+
+  [ -z "$BASE_SAMBA_IFACES_ALLOW" ] && {
+    MISSED_VAR="BASE_SAMBA_IFACES_ALLOW"
+    return $CODE_MISSED_VAR
+  }
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  _bind_ifaces=`samba_show_section_parameter "$sambaFile" "global" "bind[ \t]\{1,\}interfaces[ \t]\{1,\}only" 2>> "$LOGF"`
+
+  in_accordance_bind_ifaces=0
+  if [[ "$_bind_ifaces" != [Tt][Rr][Uu][Ee] ]] && [[ "$_bind_ifaces" != [Yy][Ee][Ss] ]] && [ "$_bind_ifaces" != "1" ]; then
+    in_accordance_bind_ifaces=1
+  fi
+
+  _ifaces=`samba_show_section_parameter "$sambaFile" "global" "interfaces" 2>> "$LOGF"`
+  in_accordance_ifaces=0
+  if [ -z "$_ifaces" ]; then
+    in_accordance_ifaces=1
+  else
+    #If the number os ifaces configured on samba file configuration is different than baseline definition,
+    #it needs to be fixed.
+    n_ifaces=`printf "%s\n" "$_ifaces" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+    n_base_ifaces=`printf "%s\n" "$BASE_SAMBA_IFACES_ALLOW" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+
+    if [ "$n_base_ifaces" -ne "$n_ifaces" ]; then
+      in_accordance_ifaces=1
+    else
+      #Checking if all ifaces configured on samba file configuration are in accordance with baseline.
+      for user in $_ifaces; do
+        found=1
+        for base_user in $BASE_SAMBA_IFACES_ALLOW; do
+          [ "$base_user" = "$user" ] && {
+            found=0
+            break
+          }
+        done
+
+        [ $found -eq 1 ] && {
+          in_accordance_ifaces=1
+          break
+        }
+      done
+    fi
+  fi
+
+  [ $in_accordance_ifaces -eq 0 ] && [ $in_accordance_bind_ifaces -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile "$sambaFile" "data"
+
+  [ $in_accordance_ifaces -eq 1 ] && {
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+    if [ -z "$_ifaces" ]; then
+      [ $verbosity ] && echo "      Adding 'interfaces' option" 
+      echo "  Adding 'interfaces' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="interfaces = $BASE_SAMBA_IFACES_ALLOW" $sambaFile > $tmp_file 2>> "$LOGF"
+    else
+      [ $verbosity ] && echo "      Updating 'interfaces' option" 
+      echo "  Updating 'interfaces' option" >> "$LOGF"
+
+      sed "s:^\([ \t]\{0,\}interfaces[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1${BASE_SAMBA_IFACES_ALLOW}:" $sambaFile > $tmp_file 2>> "$LOGF"
+    fi
+
+    cat $tmp_file > $sambaFile 2>> "$LOGF"
+    rm $tmp_file 2>> "$LOGF"
+  }
+
+  [ $in_accordance_bind_ifaces -eq 1 ] && {
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+    if [ -z "$_bind_ifaces" ]; then
+      [ $verbosity ] && echo "      Adding 'bind interfaces only' option" 
+      echo "  Adding 'bind interfaces only' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="bind interfaces only = true" $sambaFile > $tmp_file 2>> "$LOGF"
+    else
+      if [ "$_bind_ifaces" != "true" ]; then
+      [ $verbosity ] && echo "      Updating 'bind interfaces only' option" 
+      echo "  Updating 'bind interfaces only' option" >> "$LOGF"
+
+        sed "s:^\([ \t]\{0,\}bind interfaces only[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1true:" $sambaFile > $tmp_file 2>> "$LOGF"
+      fi
+    fi
+    cat $tmp_file > $sambaFile 2>> "$LOGF"
+    rm $tmp_file 2>> "$LOGF"
+  }
+
+  return $CODE_OK 
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_5
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[5]="7105"
+apply_5() {
+
+  [ -z "$BASE_SAMBA_FILES_DENY" ] && {
+    MISSED_VAR="BASE_SAMBA_FILES_DENY"
+    return $CODE_MISSED_VAR
+  }
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  _sections=`samba_list_sections "$sambaFile" "global printer" 2>> "$LOGF"`
+  _vuln_sections=""
+
+  for _section in $_sections; do
+
+    _files_deny=`samba_show_section_parameter "$sambaFile" "$_section" "veto[ \t]\{1,\}files" 2>> "$LOGF"`
+    if [ -z "$_files_deny" ]; then
+      _vuln_sections="${_vuln_sections} $_section"
+    else
+      #If the number os denied files configured on samba file configuration is different than baseline definition,
+      #it needs to be fixed.
+      n_files_deny=`printf "%s\n" "$_files_deny" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+      n_base_files_deny=`printf "%s\n" "$BASE_SAMBA_FILES_DENY" | tr " " "\n" | wc -l | sed 's/ //g' 2>> "$LOGF"`
+
+      if [ "$n_base_files_deny" -ne "$n_files_deny" ]; then
+        _vuln_sections="${_vuln_sections} $_section"
+      else
+        #Checking if all denied files configured on samba file configuration are in accordance with baseline.
+        for _file in $_files_deny; do
+          found=1
+          for _base_file in $BASE_SAMBA_FILES_DENY; do
+            [ "$_base_file" = "$_file" ] && {
+              found=0
+              break
+            }
+          done
+
+          [ $found -eq 1 ] && {
+            _vuln_sections="${_vuln_sections} $_section"
+            break
+          }
+        done
+      fi
+    fi
+
+  done
+
+  [ -z "$_vuln_sections" ] && return $CODE_CONFORMITY
+
+  backupFile "$sambaFile" "data"
+
+  [ $verbosity ] && {
+    echo "    The following sections are vulnerable:"
+    for _section in $_vuln_sections; do
+      echo "    [$_section]"
+    done
+  }
+
+  echo "The following sections are vulnerable:" >> "$LOGF"
+  echo "$_sections" >> "$LOGF"
+
+  for _section in $_vuln_sections; do
+    [ $verbosity ] && echo "    Fixing section $_section"
+    echo "Fixing section $_section" >> "$LOGF"
+    _files_deny=`samba_show_section_parameter "$sambaFile" "$_section" "veto[ \t]\{1,\}files" 2>> "$LOGF"`
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+    if [ -z "$_files_deny" ]; then
+      [ $verbosity ] && echo "      Adding 'veto files' option" 
+      echo "  Adding 'veto files' option" >> "$LOGF"
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION="${_section}" -v OPTION="veto files = $BASE_SAMBA_FILES_DENY" $sambaFile > $tmp_file 2>> "$LOGF"
+    else
+      [ $verbosity ] && echo "      Updating 'veto files' option" 
+      echo "  Updating 'veto files' option" >> "$LOGF"
+      case "`uname 2>> $LOGF`" in
+        'SunOS') sed ":^[ \t]\{0,\}\[${_section}\]:\]$:s:^[ \t]\{0,\}\(veto files[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1${BASE_SAMBA_FILES_DENY}:" $sambaFile > $tmp_file 2>> "$LOGF" ;;
+        *) sed "/^[ \t]\{0,\}\[${_section}\]/,/\]$/s/^\([ \t]\{0,\}veto files[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}/\1${BASE_SAMBA_FILES_DENY}/" $sambaFile > $tmp_file 2>> "$LOGF" ;;
+      esac
+    fi
+    cat $tmp_file > $sambaFile 2>> "$LOGF"
+    rm $tmp_file 2>> "$LOGF"
+  done
+
+  return $CODE_OK 
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_6
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[6]="7106"
+apply_6() {
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  _sections=`samba_list_sections "$sambaFile" "global" 2>> "$LOGF"`
+  _vuln_sections=""
+
+  for _section in $_sections; do
+
+    _browseable=`samba_show_section_parameter "$sambaFile" "$_section" "browseable" 2>> "$LOGF"`
+    if [ -z "$_browseable" ]; then
+      _vuln_sections="${_vuln_sections} $_section"
+    else
+      [[ "$_browseable" != [Nn][Oo] ]] && [[ "$_browseable" != [Ff][Aa][Ll][Ss][Ee] ]] && [ "$_browseable" != "0" ] &&  _vuln_sections="${_vuln_sections} $_section"
+    fi
+  done
+
+  [ -z "$_vuln_sections" ] && return $CODE_CONFORMITY
+
+  [ $verbosity ] && {
+    echo "    The following sections are vulnerable:"
+    for _section in $_vuln_sections; do
+      echo "    [$_section]"
+    done
+  }
+
+  echo "The following sections are vulnerable:" >> "$LOGF"
+  echo "$_sections" >> "$LOGF"
+
+  for _section in $_vuln_sections; do
+    [ $verbosity ] && echo "    Fixing section $_section"
+    echo "Fixing section $_section" >> "$LOGF"
+    _browseable=`samba_show_section_parameter "$sambaFile" "$_section" "browseable" 2>> "$LOGF"`
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+    if [ -z "$_browseable" ]; then
+      [ $verbosity ] && echo "      Adding 'browseable' option" 
+      echo "  Adding 'browseable' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION="${_section}" -v OPTION="browseable = no" $sambaFile > $tmp_file 2>> "$LOGF"
+    else
+      [ $verbosity ] && echo "      Updating 'browseable' option" 
+      echo "  Updating 'browseable' option" >> "$LOGF"
+      
+      case "`uname 2>> $LOGF`" in
+        'SunOS') sed ":^[ \t]\{0,\}\[${_section}\]:\]$:s:^[ \t]\{0,\}browseable[ \t]\{0,\}=[ \t]\{0,\}.\{1,\}$:browseable = no:" $sambaFile > $tmp_file 2>> "$LOGF" ;;
+        *) sed "/^[ \t]\{0,\}\[${_section}\]/,/\]$/s/^\([ \t]\{0,\}browseable[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}/\1 no/" $sambaFile > $tmp_file 2>> "$LOGF" ;;
+      esac
+    fi
+    cat $tmp_file > $sambaFile 2>> "$LOGF"
+    rm $tmp_file 2>> "$LOGF"
+  done
+
+  return $CODE_OK 
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_7
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[7]="7107"
+apply_7() {
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  _null_passwords=`samba_show_section_parameter "$sambaFile" "global" "null[ \t]\{1,\}passwords" 2>> "$LOGF"`
+
+  in_accordance=0
+  if [ -z "$_null_passwords" ]; then
+    in_accordance=1
+  else
+    [[ "$_null_passwords" != [Nn][Oo] ]] && [[ "$_null_passwords" != [Ff][Aa][Ll][Ss][Ee] ]] && [ "$_null_passwords" != "0" ] && in_accordance=1
+  fi
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile "$sambaFile" "data"
+
+  tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+  if [ -z "$_null_passwords" ]; then
+    $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="null passwords = no" $sambaFile > $tmp_file 2>> "$LOGF"
+  else
+    sed "s:^\([ \t]\{0,\}null passwords[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1no:" $sambaFile > $tmp_file 2>> "$LOGF"
+  fi
+  cat $tmp_file > $sambaFile 2>> "$LOGF"
+  rm $tmp_file 2>> "$LOGF"
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_8
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[8]="7108"
+apply_8() {
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  _encrypt_passwords=`samba_show_section_parameter "$sambaFile" "global" "encrypt[ \t]\{1,\}passwords" 2>> "$LOGF"`
+
+  in_accordance=0
+  if [ -z "$_encrypt_passwords" ]; then
+    in_accordance=1
+  else
+    [[ "$_encrypt_passwords" != [Tt][Rr][Uu][Ee] ]] && [[ "$_encrypt_passwords" != [Yy][Ee][Ss] ]] && [ "$_encrypt_passwords" != "1" ] && in_accordance=1
+  fi
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile "$sambaFile" "data"
+
+  tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"`
+  if [ -z "$_encrypt_passwords" ]; then
+    $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION=global -v OPTION="encrypt passwords = yes" $sambaFile > $tmp_file 2>> "$LOGF"
+  else
+    sed "s:^\([ \t]\{0,\}encrypt passwords[ \t]\{0,\}=[ \t]\{0,\}\).\{1,\}$:\1yes:" $sambaFile > $tmp_file 2>> "$LOGF"
+  fi
+  cat $tmp_file > $sambaFile 2>> "$LOGF"
+  rm $tmp_file 2>> "$LOGF"
+
+  return $CODE_OK
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  apply_9
+#   DESCRIPTION:  --
+#    PARAMETERS:  --
+#       RETURNS:  0 = succes ; 1 = failure
+#===============================================================================
+SUBCODE[9]="7109"
+apply_9() {
+
+  [ -f "$sambaFile" ] || {
+    MISSED_FILE="$sambaFile"
+    return $CODE_MISSED_FILE
+  }
+
+  sections=`samba_list_sections "$sambaFile" "printer" 2>> "$LOGF"`
+  vuln_sections=""
+
+  for section in $sections; do
+    guest_ok=`samba_show_section_parameter "$sambaFile" "${section}" "guest[ \t]\{1,\}ok" 2>> "$LOGF"`
+    public=`samba_show_section_parameter "$sambaFile" "${section}" "public" 2>> "$LOGF"`
+
+    ( [ -n "$guest_ok" ] && ( [ "$guest_ok" != "true" ] && [ "$guest_ok" != "yes" ] && [ "$guest_ok" != "1" ] ) ) || \
+    ( [ -n "$public" ] && ( [ "$public" != "yes" ] && [ "$public" != "true" ] && [ "$public" != "1" ] ) ) && {
+      continue
+    }
+
+
+    vuln_sections="$vuln_sections $section"
+  done
+
+  backupFile "$sambaFile" "data"
+
+  [ -z "$vuln_sections" ] && return $CODE_CONFORMITY
+
+  for section in $vuln_sections; do
+    guest_ok=`samba_show_section_parameter "$sambaFile" "${section}" "guest[ \t]\{1,\}ok" 2>> "$LOGF"`
+    public=`samba_show_section_parameter "$sambaFile" "${section}" "public" 2>> "$LOGF"`
+
+    tmp_file=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"` 
+
+    [ $verbosity ] && echo "    Fixing section $section"    
+    echo "Fixing section $section" >> "$LOGF"
+
+    if [ -z "$guest_ok" ] && [ -z "$public" ]; then
+
+      [ $verbosity ] && echo "      Adding 'guest ok' option" 
+      echo "  Adding 'guest ok' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION="${section}" -v OPTION="guest ok = no" $sambaFile > $tmp_file 2>> "$LOGF"
+
+    else
+
+      [ $verbosity ] && echo "      Removing 'guest ok' and 'public' option" 
+      echo "      Removing 'guest ok' and 'public' option" >> "$LOGF"
+
+      tmp_file1=`mktemp /tmp/security_correction.XXXXXX 2>> "$LOGF"` 
+      sed "/^[ \t]\{0,\}\[${section}\]/,/\]$/ { /guest[ \t]\{1,\}ok/d; /public[ \t]\{0,\}=/d; }" $sambaFile > $tmp_file1 2>> "$LOGF"
+
+      [ $verbosity ] && echo "      Adding 'guest ok' option" 
+      echo "  Adding 'guest ok' option" >> "$LOGF"
+
+      $AWK -f $APP_PATH/lib/Services/Samba/lib/samba_insert_option.awk -v SECTION="${section}" -v OPTION="guest ok = no" $tmp_file1 > $tmp_file 2>> "$LOGF"
+
+      rm $tmp_file1 2>> "$LOGF"
+
+    fi
+
+    cat $tmp_file > $sambaFile 2>> "$LOGF"
+    rm $tmp_file 2>> "$LOGF"
+  done
+
+}

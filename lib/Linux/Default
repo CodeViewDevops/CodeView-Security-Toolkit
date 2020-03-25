@@ -1,0 +1,921 @@
+# -------------
+# Linux Library
+# -------------------------------------------------------------------
+
+. "$APP_PATH/lib/Linux/include.sh"
+TARGET_OS="Linux"
+TECH_VER=2
+# -------------------------------------------------------------------
+
+# List of enabled routines
+BASE_IDS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 25 26 27 28 29 30 32 33 34 35 36 37 40 41 42 43 44"
+
+SUBCODE[1]="2986"
+apply_1() {
+
+  file="/etc/profile"
+  cmd=""
+
+  if [ -f /etc/SuSE-release ]; then
+  
+  	file="/etc/profile.local"
+	touch "$file"
+  else
+
+	[ -f "$file" ] || {
+
+		MISSED_FILE="$file"
+		return $CODE_MISSED_FILE 
+	}
+  fi
+
+  [ -n "$BASE_UMASK" ] || {
+    MISSED_VAR="BASE_UMASK"
+    return $CODE_MISSED_VAR 
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+ 
+  setUmask "$file" "$BASE_UMASK"
+  status=$?
+
+  [ $file_exists -eq 1 ] && backupFile "$file" "data" "rm $file"
+
+  return $status
+}
+
+
+SUBCODE[2]="2965"
+apply_2() {
+
+  # check if one of baseline variables are set
+  [ -n "$BASE_SID_DENY" -o -n "$BASE_SID_ALLOW" ] || {
+    MISSED_VAR="BASE_SID_DENY/ALLOW"
+    return 33
+  }
+
+  setSid "/dev /tmp /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin"
+  return
+}
+
+
+SUBCODE[3]="3086"
+apply_3() {
+  setCompilerPerm
+  return
+}
+
+
+SUBCODE[4]="2983"
+apply_4() {
+  setEtcPerm
+  return
+
+}
+
+SUBCODE[5]="2956"
+apply_5() {
+
+        files="/tmp/ /var/tmp/ /var/preserve/"
+        ok="1"
+
+        valid_and_vuln_dirs=`eval ls -ld "$files" 2>> "$LOGF" | awk '( $1 ~ /^d/ ) && ( $1 !~ /drwxrwxrwt/ ) { print $NF }'`
+        files=`echo "$valid_and_vuln_dirs" | tr " " "\n"`
+
+        backupFile "$files" "perm"
+
+        for f in ${files}; do
+
+                echo " Correcting directory: $f" >> "$LOGF" 2>> "$LOGF"
+                setPerm "$f" "1777" || return ${CODE_ERROR}
+                ok="0"
+        done
+
+        [ $ok -eq 1 ] && return ${CODE_CONFORMITY}
+        return ${CODE_OK}
+}
+
+SUBCODE[6]="3031"
+apply_6() {
+  fix_cron
+  return
+}
+
+
+SUBCODE[7]="3032"
+apply_7() {
+  fix_at
+  return
+}
+
+SUBCODE[8]="3087"
+apply_8() {
+  fix_tmout /etc/profile "$BASE_TMOUT" 
+  return
+}
+
+SUBCODE[9]="2974"
+apply_9() {
+  setLogPerm
+  return_code=$?
+  [ "$INSTALL_FIX_AUDIT_SCRIPT" = "0" ] && install_fix_audit_script 
+  return $return_code
+}
+
+SUBCODE[10]="3076"
+apply_10() {
+  setNullpass
+    return
+}
+
+SUBCODE[11]="2938"
+apply_11() {
+  setSysctl "net.ipv4.tcp_syncookies" "1"
+  return
+}
+
+SUBCODE[16]="2911"
+apply_16() {
+        setSysctl "net.ipv4.conf.all.forwarding" "0"
+        return
+}
+
+SUBCODE[12]="4649"
+apply_12() {
+
+  # net.ipv4.conf.all.forwarding must be set to 0 before 
+  # net.ipv4.conf.all.accept_redirects be set to 0
+
+  setSysctl "net.ipv4.conf.all.forwarding" "0"
+  ret=$?
+
+  # If forwarding is not 0 or it does not exists in sysctl file,
+  # we must add it to sysctl file.
+  grep -q "net.ipv4.conf.all.forwarding.*=.*0" /etc/sysctl.conf || echo "net.ipv4.conf.all.forwarding = 0" >> /etc/sysctl.conf
+
+  setSysctl "net.ipv4.conf.all.accept_redirects" "0"
+
+  return
+}
+
+SUBCODE[13]="2988"
+apply_13() {
+  setSysctl "net.ipv4.conf.all.log_martians" "1"
+    return
+}
+
+SUBCODE[14]="2929"
+apply_14() {
+  setSysctl "net.ipv4.icmp_echo_ignore_broadcasts" "1"
+    return
+}
+
+SUBCODE[15]="2902"
+apply_15() {
+  setSysctl "net.ipv4.conf.all.rp_filter" "1"
+  return
+}
+
+SUBCODE[17]="2920"
+apply_17() {
+        setSysctl "net.ipv4.conf.all.accept_source_route" "0"
+        return
+}
+
+SUBCODE[18]="2984"
+apply_18() {
+
+  local IFS=" 
+"
+
+  grub_file=`detect_grub`
+  if [ -n "$grub_file" -a -f "$grub_file" ]; then
+
+	files="$grub_file /etc/lilo.conf"
+  else
+  
+	files="/etc/lilo.conf"
+  fi
+
+  for file in ${files}; do
+
+        if [ -f "$file" ]; then
+
+		backupFile "$file" "perm"
+
+		setPerm "$file" "600" || {
+
+			echo "Can not set permission on $file" >> "$LOGF"
+			return "$CODE_ERROR"
+		}
+
+		setOwner "$file" "root" || {
+
+			echo "Can not set owner on $file" >> "$LOGF"
+			return "$CODE_ERROR"
+		}
+
+		return "$CODE_OK"
+	fi
+
+        MISSED_FILE="$files"
+        return "$CODE_MISSED_FILE"
+  done
+}
+
+SUBCODE[19]="3005"
+apply_19() {
+
+        runlevel=`sed -n 's/^id:\([0-9]\{1,\}\):initdefault:/\1/p' /etc/inittab 2>> "$LOGF"`
+	systemctl_path=`which systemctl 2>> "$LOGF"`
+        chkconfig_path=`which chkconfig 2>> "$LOGF"`
+
+	[ -z "$systemctl_path" ] && [ -f /bin/systemctl ] && systemctl_path="/bin/systemctl"
+        [ -z "$chkconfig_path" ] && [ -f /sbin/chkconfig ] && chkconfig_path="/sbin/chkconfig"
+        if [ "$chkconfig_path" -o "$systemctl_path" ]; then
+
+                services_backup=""
+                if [ -n "$BASE_SERV_ALLOW" ]; then
+
+			BASE_SERV_ALLOW=`echo "$BASE_SERV_ALLOW" | tr ' ' '\n' | sort -u`
+			if [ -n "$systemctl_path" ]; then
+
+                        	# Preventing to disable services mandatory for booting process
+                        	# such as: boot.local, boot.whatever
+				services=`$systemctl_path list-unit-files --type service | awk '$2 == "enabled" { print $1," 0:off 1:off 2:on 3:on 4:on 5:on" }' | \
+				sed 's/\.service//g' | egrep -iv "^[ \t]*boot.*" 2>> "$LOGF"`
+				systemctl_control='ok'
+			else
+
+                        	# Preventing to disable services mandatory for booting process
+                        	# such as: boot.local, boot.whatever
+				services=`$chkconfig_path --list | egrep -iv "^[ \t]*boot.*" 2>> "$LOGF"`
+			fi	
+
+                        in_accordance=0
+                        OLD_IFS=$IFS
+                        IFS=$'\n'
+
+                        for service in ${services}; do
+
+                                #ignoring disabled services
+                                echo "$service" | awk '{ print $2,$3,$4,$5,$6,$7 }' | grep -q "on" || continue
+                                service=`echo "$service" | cut -d" " -f1`
+
+                                accept="0"
+                                for allowed in ${BASE_SERV_ALLOW}; do
+                                        if [ "$allowed" = "$service" ]; then
+                                                accept="1"
+                                                break
+                                        fi
+                                done
+
+                                if [ "$accept" = "0" ]; then
+
+                                        in_accordance=1
+                                        apply_service="0"
+                                        [ "$interactive" = "no" ] || {
+
+                                                yn "            [*] Service to be stopped: \"${service}\". Apply?"
+                                                apply_service="$?"
+                                        }
+
+                                        [ "$apply_service" -eq "1" ] && {
+
+                                                continue
+                                        }
+
+					if [ -n "$systemctl_control" -a "$systemctl_control" = "ok" ]; then
+
+						$systemctl_path disable "$service.service" >>"$LOGF" 2>>"$LOGF"
+                                        	services_backup="$systemctl_path enable ${service}.service ;${services_backup}"
+
+					else
+
+                                        	$chkconfig_path $service off 2>&1 | grep "Service" | sed 's/insserv: \(.*\)/    [\+\+\+] \1/' > /dev/tty 2>> "$LOGF"
+                                        	services_backup="$chkconfig_path ${service} on;${services_backup}"
+					fi
+                                fi
+                        done
+
+                        IFS=$OLD_IFS
+                        backupFile "" "perm" "$services_backup"
+                        [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+                        return $CODE_OK
+                fi
+
+
+                if [ -n "$BASE_SERV_DENY" ]; then
+
+			BASE_SERV_DENY=`echo "$BASE_SERV_DENY" | tr ' ' '\n' | sort -u`
+                        in_accordance=0
+			for service in ${services}; do
+
+                                #ignoring disabled services
+                                echo "$service" | awk '{ print $2,$3,$4,$5,$6,$7 }' | grep -q "on" || continue
+                                service=`echo "$service" | cut -d" " -f1`
+
+                                accept="1"
+                                for denied in ${BASE_SERV_DENY}; do
+                                        if [ "$denied" = "$service" ]; then
+
+                                                accept="0"
+                                                break
+                                        fi
+                                done
+
+                                if [ "$accept" = "0" ]; then
+
+                                        in_accordance=1
+                                        apply_service="0"
+                                        [ "$interactive" = "no" ] || {
+
+                                                yn "            [*] Service to be stopped: \"${service}\". Apply?"
+                                                apply_service="$?"
+                                        }
+
+                                        [ "$apply_service" -eq "1" ] && {
+
+                                                continue
+                                        }
+
+					if [ -n "$systemctl_control" -a "$systemctl_control" = "ok" ]; then
+
+						$systemctl_path disable "$service.service" >>"$LOGF" 2>>"$LOGF"
+                                        	services_backup="$systemctl_path enable ${service}.service ;${services_backup}"
+
+					else
+
+                                        	$chkconfig_path $service off 2>&1 | grep "Service" | sed 's/insserv: \(.*\)/    [\+\+\+] \1/' > /dev/tty 2>> "$LOGF"
+                                        	services_backup="$chkconfig_path ${service} on;${services_backup}"
+					fi
+                                fi
+
+			done
+
+                        backupFile "" "perm" "${services_backup}"
+                        [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+                        return $CODE_OK
+                fi
+
+        else
+
+                fix_unnecesary_services
+        fi
+}
+
+SUBCODE[20]="3078"
+apply_20() {
+  file="/etc/passwd"
+  default_shell="/sbin/nologin"
+	target_users=""
+
+  [ -z "$BASE_NOSHELL" ] && {
+    MISSED_VAR="BASE_NOSHELL"
+    return $CODE_MISSED_VAR 
+  }
+
+  [ -z "$BASE_SHELLS" ] && {
+    MISSED_VAR="BASE_SHELLS"
+    return $CODE_MISSED_VAR 
+  }
+
+  for user in $BASE_NOSHELL; do
+    user_exists=`cat $file | cut -d: -f1 | grep "^$user$" 2>> "$LOGF"`
+
+    [ -n "$user_exists" ] || continue
+    user_shell=`grep "^$user" "$file" | cut -d: -f7 2>> "$LOGF"`
+
+    [ "$user_shell" = "$default_shell" ] && continue
+
+		target_users="${target_users} $user"
+  done
+
+  [ -z "$target_users" ] && return $CODE_CONFORMITY
+
+  backupFile "$file" "data"
+
+  for user in $target_users; do
+		echo "Setting shell $default_shell to $user" >> "$LOGF"
+		[ $verbosity ] && echo "    Setting shell $default_shell to $user"
+		usermod -s "$default_shell" "$user" 2>> "$LOGF"
+	done
+
+  return $CODE_OK 
+}
+
+SUBCODE[21]="2883"
+apply_21() {
+
+  	correction_was_done=0
+
+	# Fix /etc/init/control-alt-delete.conf
+	file="/etc/init/control-alt-delete.conf"
+	[ -f "$file" ] && [ -n "`grep '^[[:blank:]]*start[[:blank:]]*on[[:blank:]]*control-alt-delete' $file`" ] && {
+
+              backupFile "$file" "data"
+              setLine "$file" "^[ \t]*start[ \t]+on[ \t]+control\-alt\-delete" "#" && correction_was_done=1
+	 
+	      [ "$correction_was_done" == "1" ] && return "$CODE_OK"
+	      return "$CODE_CONFORMITY"
+         }
+
+          # Fix /etc/event.d/control-alt-delete
+          file="/etc/event.d/control-alt-delete"
+          [ -f "$file" ] && [ -n "`grep '^[[:blank:]]*[^#]' $file`" ] && {
+
+               backupFile "$file" "data"
+               tmp_name=`mktemp /tmp/ctrlaltdel_XXXXXXXXX`
+               sed "s/^\([[:blank:]]*[^#]\)/# \1/g" "$file" > "$tmp_name" && cat "$tmp_name" > "$file" && correction_was_done=1
+               rm "$tmp_name"
+
+	      [ "$correction_was_done" == "1" ] && return "$CODE_OK"
+	      return "$CODE_CONFORMITY"
+          }
+
+          # Fix /etc/inittab
+          file="/etc/inittab"
+          [ -f "$file" ] && [ -n "`grep '^[[:blank:]]*ca:[0-9]*:ctrlaltdel' $file`" ] && {
+
+              backupFile "$file" "data"
+              tmp_name=`mktemp /tmp/ctrlaltdel_XXXXXXXXX`
+              sed 's/^[ \t]\{0,\}ca\:[0-9]\{1,\}\:ctrlaltdel.*/\# &/g' "$file" 2>/dev/null > "$tmp_name" && correction_was_done=1
+              cat "$tmp_name" > "$file"
+              rm -f "$tmp_name" 2>/dev/null
+
+              [ "$correction_was_done" == "1" ] && return "$CODE_OK"
+              return "$CODE_CONFORMITY"
+          }
+
+	return "$CODE_CONFORMITY"
+
+}
+
+SUBCODE[22]="4647"
+apply_22() {
+  file="/etc/securetty"
+  cmd=""
+
+  [ -f "$file" ] || {
+    MISSED_FILE="$file"
+    return $CODE_MISSED_FILE
+  }
+
+  [ -a "$file" ] || cmd="rm $file"
+
+  lines=`grep -v "^[[:blank:]]*#\|^$" "$file" | grep -v "^[[:blank:]]*tty[0-9]*$" 2>> "$LOGF"`
+
+  [ -z "$lines" ] && return $CODE_CONFORMITY
+
+  backupFile "$file" "data" "$cmd"
+
+  tmp_IFS=$IFS
+  IFS=$'\n'
+
+  for line in $lines; do
+    setLine "$file" "^$line$" "#"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  done
+
+  IFS=$tmp_IFS
+
+  return $CODE_OK
+}
+
+SUBCODE[23]="4648"
+apply_23() {
+  file1="/etc/ftpusers /etc/vsftpd/ftpusers"
+  files="/etc/vsftpd.conf /etc/vsftpd/vsftpd.conf /etc/pure-ftpd.conf"
+
+  unset user_files conf_files
+
+  for f in $file1; do
+    [ -f "$f" ] && user_files="$user_files $f"
+  done
+
+  for f in $files; do
+    [ -f "$f" ] && conf_files="$conf_files $f"
+  done
+
+  [ -z "$user_files $conf_files" ] && {
+    MISSED_FILE="$user_files $conf_files"
+    return $CODE_MISSED_FILE
+  }
+
+  backupFile "$user_files $conf_files" "data"
+
+  in_accordance=0
+  for f in $user_files; do
+    setLine "$f" "^ftp$" "ftp" 
+    retval=$?
+
+    case $retval in
+      $CODE_CONFORMITY)
+        [ $verbosity ] && echo "    $f already in accordance with baseline"
+        ;;
+
+      $CODE_OK)
+        in_accordance=1
+        ;;
+
+      $CODE_ERROR)
+        return $CODE_ERROR
+        ;;
+    esac
+
+  done
+
+  for f in ${conf_files}; do
+
+    case "$f" in
+
+	"/etc/vsftpd.conf"|"/etc/vsftpd/vsftpd.conf" )
+
+		ftp_tempfile=`mktemp /tmp/XXXXXXXXXXXXX`
+
+	    	test_vsftpd_anon=`egrep -i "^[ \t]*anonymous_enable[ \t]*=[ \t]*yes" "$f"`
+		if [ -n "$test_vsftpd_anon" ]; then
+
+			cat "$f" | sed '/^[ \t]\{0,\}anonymous_enable/d' > "$ftp_tempfile"
+			echo "anonymous_enable=NO" >> "$ftp_tempfile"
+			cat "$ftp_tempfile" > "$f"
+    	    		retval="$?"
+		else
+
+			test_vsftpd_anon=`egrep -i "^[ \t]*anonymous_enable[ \t]*=[ \t]*no" "$f"`
+			if [ -z "$test_vsftpd_anon" ]; then
+
+				cat "$f" > "$ftp_tempfile"
+				echo "anonymous_enable=NO" >> "$ftp_tempfile"
+				cat "$ftp_tempfile" > "$f"
+    	    			retval="$?"
+			fi
+		fi
+	;;
+
+	"/etc/pure-ftpd.conf" )
+
+		ftp_tempfile=`mktemp /tmp/XXXXXXXXXXXXX`
+		retval=""
+
+		test_pureftpd1=`egrep "^[ \t]*AnonymousOnly[ \t]+([nN][oO])" "$f"`
+		test_pureftpd2=`egrep "^[ \t]*NoAnonymous[ \t]+([yY][eE][sS])" "$f"`
+
+		[ -z "$test_pureftpd1" ] || [ -z "$test_pureftpd2" ] && {
+
+	    		sed -e 's/^[ \t]\{0,\}AnonymousOnly[ \t]\{1,\}/# &/g ; s/^[ \t]\{0,\}NoAnonymous[ \t]\{1,\}/# &/g' "$f"  > "$ftp_tempfile"
+			echo "AnonymousOnly no" >> "$ftp_tempfile"
+			echo "NoAnonymous yes" >> "$ftp_tempfile"
+			retval=${CODE_OK}
+		}
+
+		cat "$ftp_tempfile" > "$f"
+		rm -f "$ftp_tempfile"
+		[ -z "$retval" ] && retval=${CODE_CONFORMITY}
+	;;
+
+    esac
+
+    [ -z "$retval" ] && { 
+
+                retval="$CODE_CONFORMITY"
+                return ${CODE_CONFORMITY}
+    }
+
+
+    case "$retval" in
+
+	$CODE_CONFORMITY )
+        
+		[ $verbosity ] && echo "    $f already in accordance with baseline"
+        ;;
+
+      	$CODE_OK )
+        
+		in_accordance=1
+        ;;
+
+      	$CODE_ERROR )
+        
+		return $CODE_ERROR
+        ;;
+    esac
+  done
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  return $CODE_OK
+}
+
+SUBCODE[24]="2893"
+apply_24() {
+  file="/etc/resolv.conf"
+
+
+  [ -z "$BASE_DNS" ] && {
+    MISSED_VAR="BASE_DNS"
+    return $CODE_MISSED_VAR 
+  }
+
+  backupFile "$file" "data"
+  setContent "$file" "$BASE_DNS"
+  return
+}
+
+SUBCODE[25]="3050"
+apply_25() {
+
+	# initial checks
+	[ -n "$BASE_BANNER" ] || {
+
+		MISSED_VAR="BASE_BANNER"
+		return ${CODE_MISSED_VAR} 
+	}
+
+	# related files
+	files="/etc/motd /etc/issue.net /etc/issue /var/run/motd.dynamic"
+	target_files=""
+
+	for file in ${files}; do
+
+		[ -f "$file" ] && target_files="${target_files} $file" 
+	done
+
+	# probably it s a Ubuntu like
+	[ -d "/etc/update-motd.d" ] && {
+
+		exec_dir="/etc/update-motd.d"
+		exec_files=`find "$exec_dir" -type f \( -perm -u=x -o -perm -g=x -o -perm -o=x \) 2>/dev/null`
+		exec_files=`echo "$exec_files" | tr ' ' '\n'`
+		[ -n "$exec_files" ] && backupFile "$exec_files" "data"
+		for exec_file in ${exec_files}; do
+
+			chmod -x "$exec_file" 2>/dev/null
+		done
+	}
+
+	backupFile "$target_files" "data"
+	in_accordance=0
+
+	for file in ${target_files}; do
+
+		#Delete motd content
+		if [ -n "$BASE_EMPTY_MOTD" -a "$BASE_EMPTY_MOTD" = "on" ]; then 
+
+			if [ "$file" = "/etc/motd" ]; then
+
+				echo "" > "$file"
+				retval=$?
+                        else
+
+                                setContent "$file" "$BASE_BANNER"
+                                retval=$?
+			fi
+		else
+
+			setContent "$file" "$BASE_BANNER"
+			retval=$?
+		fi
+
+		case $retval in
+
+			${CODE_ERROR})
+
+				return ${CODE_ERROR}
+			;;
+
+			${CODE_OK})
+
+				in_accordance=1
+			;;
+		esac
+	done
+
+	[ "$in_accordance" -eq 0 ] && return ${CODE_CONFORMITY}
+
+	return ${CODE_OK}
+}
+
+SUBCODE[26]="3029"
+apply_26() {
+
+  setTrust
+  return
+
+}
+
+SUBCODE[27]="2987"
+apply_27() {
+  local IFS=" 
+"
+  files="/etc/syslog.conf /etc/rsyslog.conf"
+  cmd=""
+  str="authpriv.*			/var/log/secure"
+
+  for file in ${files}; do
+
+	if [ -f "$file" ]; then
+	
+		egrep -sq "^[[:blank:]]*authpriv\.\*[[:blank:]]+\/var\/log\/secure" "$file" && return ${CODE_CONFORMITY}
+
+		backupFile "$file" "data" "$cmd"
+		setLine "$file" "^[[:blank:]]*authpriv\.*[[:blank:]]+\/var\/log\/secure" "$str"
+
+		return ${CODE_OK}
+	fi
+
+  done
+
+  MISSED_FILE="$files"
+  return "$CODE_MISSED_FILE"
+}
+
+SUBCODE[28]="2993"
+apply_28() {
+  file=/etc/aliases
+  cmd=""  
+
+  path_blank_sep=`echo $PATH | tr ':' ' ' 2>> "$LOGF"`
+  newaliases_path=`find $path_blank_sep -name "newaliases" -perm /111 2>> "$LOGF"`
+
+  [ -z "$newaliases_path" ] && return $CODE_CONFORMITY
+
+  backupFile "$file" "data" "newaliases"
+  setLine "$file" "^[^#|]*\|" "#"
+
+  case $? in
+    $CODE_ERROR)
+      return $CODE_ERROR
+      ;;
+
+    $CODE_CONFORMITY)
+      return $CODE_CONFORMITY
+      ;;
+  esac
+
+  newaliases
+  return $CODE_OK
+}
+
+SUBCODE[29]="3083"
+apply_29 () {
+
+  # found in lib/Linux/include.sh
+  fix_irrestrict_su 
+  return
+
+}
+
+SUBCODE[30]="3333"
+apply_30 () {
+
+  files="/etc/profile /etc/bashrc /etc/bash.bashrc /root/.profile /root/.bashrc"
+  directive="if \[ \`id -u\` != 0 \]; then umask ${BASE_UMASK}; else umask ${BASE_RUMASK}; fi"
+  regex="umask"
+
+  # found in lib/common
+  # #       RETURNS:  0 = success ; 1 = failure ; 79 = directive ($3) not found
+  # #                 80 = add directive is not necessary
+  #
+  fix_irrestrict_su_umask "$files" "$directive" "$regex"
+
+  return
+
+}
+
+SUBCODE[31]="2370"
+apply_31 () {
+
+  # found in lib/Linux/include.sh
+  fix_login_attempts
+  return $?
+
+}
+
+SUBCODE[32]="2994"
+apply_32 () {
+
+  #found in lib/Linux/include.sh
+  snmp_fix_default_communities
+  return
+
+}
+
+SUBCODE[33]="2947"
+apply_33 () {
+
+  # found in lib/Linux/include.sh
+  fix_suid_remote_directories
+  return
+
+}
+
+
+SUBCODE[34]="2975"
+apply_34 () {
+
+  # found in lib/Linux/include.sh
+  fix_perms_on_audit_files
+
+  return $return_code
+
+}
+
+SUBCODE[35]="3084"
+apply_35 () {
+
+  #found in lib/common
+  fix_invalid_PATH
+  return
+
+}
+
+SUBCODE[36]="3064"
+apply_36 () {
+
+  # found in lib/Linux/include.sh
+  fix_password_expiration "$BASE_PASS_DAYS"
+
+  return
+
+}
+
+SUBCODE[37]="4646"
+apply_37 () {
+
+
+  # found in lib/Linux/include.sh
+  fix_grub_password  
+  return
+
+}
+
+SUBCODE[38]="2371"
+apply_38 () {
+
+  # found in lib/Linux/include.sh
+  fix_password_history
+  return
+
+}
+
+SUBCODE[39]="2372"
+apply_39 () {
+
+  # found in lib/Linux/include.sh
+  fix_password_complexity
+  return
+
+}
+
+SUBCODE[40]="3052"
+apply_40 () {
+
+
+  # found in lib/Linux/include.sh
+  fix_irrestrict_graphical_login
+
+  return
+
+}
+
+SUBCODE[41]="3063"
+apply_41 () {
+
+  # found in lib/Linux/include.sh
+  fix_min_len_password 
+
+  return
+
+}
+
+SUBCODE[42]="3070"
+apply_42() {
+
+  snmp_fix_managers
+  return
+
+}
+
+SUBCODE[43]="3066"
+apply_43() {
+
+  set_syslog_in_sudoers "/etc/sudoers"
+  return
+
+}
+
+SUBCODE[44]="3069"
+apply_44 () {
+
+  # found in lib/Linux/include.sh
+  fix_password_warning "$BASE_PASS_WARN_AGE"
+  return
+
+}

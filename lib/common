@@ -1,0 +1,3706 @@
+# -------------------
+# Common Unix Library
+# -------------------------------------------------------------------
+LIB_VER=2
+
+CODE_OK=0
+CODE_CONFORMITY=22
+CODE_ERROR=1
+CODE_MISSED_VAR=33
+CODE_MISSED_FILE=34
+CODE_KERNEL=23
+CODE_SUNOS_SMALLZONE=25
+CODE_FAILURE=26
+CODE_NDD_ERROR=27
+
+# Secutiry Session Management API
+. "$APP_PATH/lib/security_session"
+
+
+# SunOS/Solaris compatibility
+[ "`uname -s`" = "SunOS" ] && {
+  eval "T[1]=test" 2> /dev/null || {
+	echo "[-] The shell used to run this script is not compatible"
+	[ "`uname -s`" = "SunOS" -a -x /usr/xpg4/bin/sh ] && {
+		cat <<END
+
+Try running the following command:
+    /usr/xpg4/bin/sh $0
+
+Or change the first line of the script from:
+    #!/bin/sh
+
+To:
+    #!/usr/xpg4/bin/sh
+
+Type "chmod 500 $0" and then run as:
+    $0
+
+END
+	}
+	echo "[-] Exiting..."
+	exit 1
+  }
+
+  # test if it has mktemp utility
+  HASMKTEMP=`mktemp /tmp/correction.XXXXXX 2> /dev/null`
+  if [ -n "$HASMKTEMP" ]; then
+  	rm -f $HASMKTEMP
+  else
+    # define one
+    [ -d /usr/xpg4/bin ] || mkdir -p /usr/xpg4/bin
+    echo '#!/bin/sh' > /usr/xpg4/bin/mktemp
+    echo '( echo "/tmp/"`date '+%H%M%S'` || echo /tmp/.proteus-LitSwD ) 2> /dev/null' >> /usr/xpg4/bin/mktemp
+    chmod 700 /usr/xpg4/bin/mktemp || {
+      echo "Unable to create mktemp file under /usr/xpg4/bin"
+      exit 1
+    }
+  fi
+  
+  # awk compatibility
+  [ -x /usr/xpg4/bin/awk ] || {
+      [ -x /usr/bin/nawk ] || {
+        echo "No awk/nawk found. Exiting..."
+        exit 1
+      }
+      ln -s /usr/bin/nawk /usr/xpg4/bin/awk || {
+        echo "Problems linking: ln -s /usr/bin/nawk /usr/xpg4/bin/awk"
+        exit 1
+      }
+  }
+}
+
+# AIX compatibility
+[ "`uname -s`" = "AIX" ] && {
+  # test if it has mktemp utility
+  HASMKTEMP=`mktemp /tmp/correction.XXXXXX 2> /dev/null`
+  if [ -n "$HASMKTEMP" ]; then
+          rm -f $HASMKTEMP
+  else
+          # define one
+          [ -d /usr/xpg4/bin ] || mkdir -p /usr/xpg4/bin
+          echo '#!/bin/sh' > /usr/xpg4/bin/mktemp
+          echo '( echo "/tmp/"`date '+%H%M%S'` || echo /tmp/.proteus-LitSwD ) 2> /dev/null' >> /usr/xpg4/bin/mktemp
+          chmod 700 /usr/xpg4/bin/mktemp || {
+                  echo "Unable to create mktemp file under /usr/xpg4/bin"
+                  exit 1
+          }
+  fi
+}
+
+
+
+#
+# Defines a variable to be used inside sed commands
+# to parse whitespaces and tabs. It should be [:blank:],
+# but [:blank:] isn't compatible with all systems.
+#
+# Again: the variable must be used ONLY with sed.                                                 
+#
+createSedGlobalVariable () {
+	# 
+	# Tests if sed of current system is compatible with [:blank:]
+	#
+  # The test tries to replace a <TAB> using [:blank:].
+  # If we obtain the desired output, it's compatible.                                               
+  #
+  if [ "`printf "a\tb\n"|sed 's/[[:blank:]]//' 2> /dev/null`" = "ab" ]; then
+    BLANK_SED="[[:blank:]]"
+  
+  elif [ "`printf "a\tb\n"|sed 's/[ \t]//' 2> /dev/null`" = "ab" ]; then
+    BLANK_SED="[ \t]"
+
+  else 
+    echo "Error: both tests of sed failed."
+    echo "Error: both tests of sed failed." >> $LOGE
+    exit 1
+  fi
+}
+createSedGlobalVariable
+
+
+
+
+
+# lock sys users pass
+setNullpass() {
+  
+  [ -n "$BASE_SYSUSERS" ] || return $CODE_CONFORMITY 
+
+  target_users=""
+  system_name=`uname 2>> $LOGE`
+
+  for u in $BASE_SYSUSERS; do
+    #check if user exists on system
+    grep -q "^$u:" /etc/passwd 2>> "$LOGE" || continue
+
+    #check if user is already locked.
+    case "$system_name" in
+      'Linux') 
+        user_status=`passwd -S david | awk '{ print $2 }'`
+        [ "$user_status" = "L" ] && continue
+      ;;
+
+      'SunOS') 
+        user_status=`passwd -sa | awk '$1 ~ /^'$u'$/ { print $2 }'`
+        [ "$user_status" = "LK" ] && continue
+      ;;
+
+      'HP-UX') 
+        user_status=`/usr/lbin/getprpw -l $u | sed -n 's/.\{1,\}alock=\([a-zA-Z]\{2,3\}\).\{1,\}/\1/p'`
+        [ "$user_status" = "YES" ] && continue
+      ;;
+    esac
+
+    target_users="${target_users} $u"
+  done
+
+  [ -z "$target_users" ] && return $CODE_CONFORMITY
+
+  files="/etc/passwd /etc/shadow"
+
+  [ "$system_name" = "HP-UX" ] && files="${files} /tcb/files/auth/"
+
+  backupFile "$files" data
+
+  for u in $target_users; do
+    echo "Locking account $u..." >> "$LOGF"
+    [ $verbosity ] && echo "    Locking account $u..."
+
+    case "$system_name" in
+      'HP-UX')
+        /usr/lbin/modprpw -k -m alock=YES $u 2>> "$LOGE"
+        RET=$?
+        ;;
+
+      *)
+        passwd -l $u >> "$LOGE" 2>&1 
+        RET=$?
+        ;;
+    esac
+
+    [ $RET -eq $CODE_ERROR ] && {
+      echo "Impossible to lock account for user $u... skipping..." >> "$LOGF"
+      [ $verbosity ] && echo "    Impossible to lock account for user $u... skipping..."
+      return $CODE_ERROR 
+    }
+  done
+
+  return $CODE_OK
+
+}
+
+
+# modify a string on a line of a file
+# 
+# $1 -> file
+# $2 -> regex/pattern for matching line
+# $3 -> string to substitute
+# $4 -> value
+setStr() {
+
+  local file="$1"
+  local line="$2"
+  local regex="$3"
+  local value="$4"
+
+  # test writable
+  [ -w $file ] || {
+    [ $verbosity ] && echo "File $file is not writable"
+    echo "File $file is not writable" >> "$LOGF"
+    return $CODE_ERROR 
+  }  
+
+  awk -v FILE="$file" -v LINE="$line" -v REGEX="$regex" -v VALUE="$value" -v LOGF="$LOGE" '
+  BEGIN {
+    CHANGE=0
+    "mktemp /tmp/correction.XXXXXX 2>> $LOGE" | getline OUT
+  }
+
+  {
+    # line match
+    if(match($0, LINE)) {
+      # change regex for value
+      if(sub(REGEX, VALUE, $0))
+        CHANGE=1
+    }
+
+    # print changed or not line to temp file
+    print $0 >> OUT
+
+  }
+
+  END {
+
+    if(CHANGE)
+      CMD="cat " OUT " > " FILE " && rm -f " OUT
+    else
+      CMD="rm -f " OUT
+
+    close(OUT)
+
+    if(system(CMD)) {
+      print "Error executing: " CMD >> LOGF
+      print "Perhaps " FILE " has no writing permission" >> LOGF
+      exit 1
+    }
+
+    # if no changes return 22
+    if(CHANGE)
+      exit 0
+    else
+      exit 22
+    
+  }' $file 2>> "$LOGE"
+
+  # grab awk return value
+  return  
+}
+
+fix_home_directories() {
+
+
+  [ -z "$BASE_SYSUSERS" ] && {
+    MISSED_VAR="BASE_SYSUSERS"
+    return $CODE_MISSED_VAR
+  }
+
+  _vuln_users=""
+  _user_home_list=""
+
+  for _user in `grep ":/:.\{1,\}sh[[:blank:]]*$" /etc/passwd | awk -F: '{print $1}' 2>> "$LOGE"`; do
+    vuln=0
+    for _base_user in $BASE_SYSUSERS; do
+      [ "$_base_user" = "$_user" ] && {
+        vuln=1
+        break
+      }
+    done
+
+    [ $vuln -eq 0 ] && {
+      [ $verbosity ] && echo "    Home directory for $_user is /"
+      echo "Home directory for $_user is /" >> "$LOGF"
+
+      _vuln_users="${_vuln_users} $_user"
+    }
+  done
+
+  [ -z "$_vuln_users" ] && return $CODE_CONFORMITY
+
+
+  for _user in $_vuln_users; do
+    _home_created=1
+
+    if [ "$_user" = "root" ]; then
+      _home="/root"
+      [ -d "$_home" ] || {
+        mkdir $_home 2>> "$LOGE" || {
+          [ $verbosity ] && echo "    Impossible to create $_home, skipping..."
+          echo "    Impossible to create $_home, skipping..." >> "$LOGF"
+          continue
+        }
+        _home_created=0
+      }
+    else
+      case "`uname 2>> $LOGE`" in
+        'SunOS')
+          _home="/export/home/$_user"
+          [ -d "$_home" ] || {
+            mkdir $_home 2>> "$LOGE" || {
+              _alt_home="/home/$_user"
+              [ $verbosity ] && echo "    Impossible to create $_home, trying on $_alt_home ..."
+              echo "    Impossible to create $_home, trying on $_alt_home..." >> "$LOGF"
+
+              _home=$_alt_home
+
+              [ -d "$_home" ] || {
+                mkdir $_home 2>> "$LOGE" || {
+                  [ $verbosity ] && echo "    Impossible to create $_home, skipping..."
+                  echo "    Impossible to create $_home, skipping..." >> "$LOGF"
+                  continue
+                }
+              }
+            }
+            _home_created=0
+          }
+          ;;
+
+         *)
+           _home="/home/$_user"
+           [ -d "$_home" ] || {
+             mkdir $_home 2>> "$LOGE" || {
+               [ $verbosity ] && echo "    Impossible to create $_home, skipping..."
+               echo "    Impossible to create $_home, skipping..." >> "$LOGF"
+               continue
+             }
+             _home_created=0
+           }
+          ;; 
+        esac
+
+    fi
+
+    _group=`groups $_user | awk ' { print $1 } ' 2>> "$LOGE"`
+    chmod 700 $_home 2>> "$LOGE" || {
+      [ $verbosity ] && echo "    Cannot change $_home permission, skipping..."
+      echo "Cannot change $_home permission, skipping..." >> "$LOGF"
+      [ $_home_created -eq 0 ] && {
+        [ $verbosity ] && echo "    Removing $_home..."
+        echo "    Removing $_home..." >> "$LOGF"
+        rm -rf $_home 2>> "$LOGE"
+      }
+      continue
+    }
+
+    chown $_user:$_group $_home 2>> "$LOGE" || {
+      [ $verbosity ] && echo "    Cannot change $_home owner, skipping..."
+      echo "Cannot change $_home owner, skipping..." >> "$LOGF"
+      [ $_home_created -eq 0 ] && {
+        [ $verbosity ] && echo "    Removing $_home..."
+        echo "    Removing $_home..." >> "$LOGF"
+        rm -rf $_home 2>> "$LOGE"
+      }
+      continue
+    }
+
+    _user_home_list="${_user_home_list} ${_user}:${_home}"
+
+  done
+
+  _file="/etc/passwd"
+
+  backupFile $_file data
+
+  for user_home in $_user_home_list; do
+    _user=`echo $user_home | cut -d: -f1 2>> "$LOGE"`
+    _home=`echo $user_home | cut -d: -f2 2>> "$LOGE"`
+
+    setStr $_file "^[[:blank:]]*$_user:" ":/:" ":$_home:"
+
+    case $? in
+
+      $CODE_ERROR)
+        [ $verbosity ] && echo "    Impossible to change home directory definition for $_user on $_file, aborting..."
+        echo "Impossible to change home directory definition for $_user on $_file, aborting..." >> "$LOGF"
+        return $CODE_ERROR
+        ;;
+
+      $CODE_OK) 
+        [ $verbosity ] && echo "    ** DO NO FORGET: It's necessary to move the ${_user}'s file(s) to $_home! **"
+        echo "** DO NOT FORGET: It's necessary to move the ${_user}'s file(s) to $_home! **" >> "$LOGF"
+      ;;
+    esac
+  done
+
+  return $CODE_OK
+}
+
+# set user home directory
+setHome() {
+
+  [ $# -lt 2 ] && return $CODE_ERROR
+
+  user=$1
+  home=$2
+  file=/etc/passwd
+
+  [ -n "$user" -a -n "$home" ] || return $CODE_ERROR 
+
+  # test if already done
+  data=`awk -F: -v U=$user -v H="undef" '
+  {
+    if($0 ~ "^[[:blank:]]*"U":")
+      H=$6
+  }
+
+  END { print H }
+
+  ' $file 2>> "$LOGF"`
+
+  [ "$data" = "undef" ] && {
+    echo "User $user not found" >> "$LOGF"
+    [ $verbosity ] && echo "    User $user not found"
+    return $CODE_CONFORMITY 
+  }
+
+  if [ -n "$data" ]; then
+    echo "Home directory for user $user: $data" 2>> "$LOGF"
+    [ $verbosity ] && echo "    Home directory for user $user: $data"
+  else
+    echo "    No home defined for user $user" 2>> "$LOGF"
+    [ $verbosity ] && echo "No home defined for user $user"
+  fi
+
+  [ "$home" = "$data" ] && return $CODE_CONFORMITY 
+
+  [ -d "$home" ] || {
+    mkdir $home 2>> "$LOGF" || {
+      echo "Can not create directory $home" >> "$LOGF"
+      [ $verbosity ] && echo "    Can not create directory $home"
+      return $CODE_ERROR 
+    }
+  }
+
+  # get default group 
+  group=`groups $user | awk ' { print $1 } ' 2>> "$LOGF"`
+
+  chmod 700 $home 2>> "$LOGF" || return $CODE_ERROR 
+  chown $user:$group $home 2>> "$LOGF" || return $CODE_ERROR 
+  for a in /.*; do
+    [ $a = "/." ] && continue
+    [ $a = "/.." ] && continue
+    cp -fr $a $home >> "$LOGF" 2>&1 || return $CODE_ERROR 
+  done
+  
+  # backup
+  backupFile $file data
+
+  setStr $file "^[[:blank:]]*$user:" ":$data:" ":$home:"
+  RET=$?
+
+  [ $RET -eq $CODE_OK ] && [ $verbosity ] && echo "    It's necessary to move the ${user}'s file(s) to $home... Don't forget!"
+
+  return $RET
+
+}
+
+
+# empty .rhosts .netrc and /etc/hosts.equiv files
+setTrust() {
+
+  perm=600
+
+  files="/etc/hosts.equiv"
+
+  SORT=`which sort 2>> "$LOGE"`
+
+  home_dirs=`get_home_directories $SORT 2>> "$LOGE"`
+
+  # search .netrc and .rhosts files on home dirs
+  for h in $home_dirs; do
+    [ -s $h/.netrc ] && files="$files $h/.netrc"
+    [ -s $h/.rhosts ] && files="$files $h/.rhosts"
+  done
+
+  [ -n "$files" ] && {  
+
+    vuln_perm_files=`find $files ! -perm $perm 2>> "$LOGE"`
+    target_files=""
+
+    for file in $files; do
+      vuln=`egrep -v "^[[:blank:]]*#" $file | egrep "\+"`
+      if [ -n "$vuln" ]; then
+        if [ -z "$target_files" ]; then
+          target_files=$file
+        else
+          target_files="$target_files $file"
+        fi
+      else
+        printf "$vuln_perm_files\n" | grep -q "$file" &&  {
+          if [ -z "$target_files" ]; then
+            target_files=$file
+          else
+            target_files="$target_files $file"
+          fi
+        }
+      fi
+    done
+
+    [ -z "$target_files" ] && return $CODE_CONFORMITY
+
+    backupFile "$target_files" data
+
+    for f in $target_files; do
+      # empty
+      #setContent $f
+      tmp_file=`mktemp /tmp/tmpXXXXXX`
+      awk ' (!match($0,/^[[:blank:]]*\+[[:blank:]]*$|^[[:blank:]]*\+[[:blank:]]+.*|^[[:blank:]]*[a-zA-Z0-9\_\-\.]+[[:blank:]]+\+$/)) { print $0 } ' "$f" >> $tmp_file
+      cat $tmp_file > $f
+      rm $tmp_file
+    done
+    
+    chmod $perm $target_files files 2>> "$LOGE"
+
+    return $CODE_OK
+
+  }
+
+  # nothing to do
+  return $CODE_CONFORMITY 
+
+}
+
+killproc() {
+            pid=`ps -e | awk '$NF~/'"$1"'/ {print $1}'`
+            if [ "X$pid" != "X" ]; then
+                    if kill "$pid"; then
+          [ $verbosity ] && echo "$1 stopped"
+                            echo "$1 stopped" >> "$LOGF"
+                    else
+                [ $verbosity ] && echo "unable to stop $1"
+                            echo "Unable to stop $1" >> "$LOGF"
+                    fi
+      else
+        [ $verbosity ] && echo "$1 not running"
+                    echo "$1 not running" >> "$LOGF"
+            fi
+}
+
+
+# unset suids/sgids accoring to baseline variables
+setSid() {
+
+  [ $# -lt 1 ] && {
+    echo "No paths given." >> $LOGF
+    return $CODE_ERROR
+  }
+
+  [ -z "$BASE_SID_ALLOW" ] && [ -z "$BASE_SID_DENY" ] && return $CODE_MISSED_VAR
+
+  path=$1
+  files=""
+
+  echo "Generating SUID/SGID list..." >> "$LOGF"
+  [ $verbosity ] && echo "    Generating SUID/SGID list..."
+  files=`find $path \( -perm -4000 -o -perm -2000 \) -type f  2>> "$LOGE"`
+
+  [ -n "$files" ] || return $CODE_CONFORMITY 
+
+  # treat denied/allowed
+  # test rule default allowed, if not default is deny
+  local bad=""
+
+  if [ -n "$BASE_SID_DENY" ]; then
+
+    echo "Assuming policy: Default Allow. Using variable BASE_SID_DENY" >> "$LOGF"
+    [ $verbosity ] && echo "    Assuming policy: Default Allow. Using variable BASE_SID_DENY"
+    for f in $files; do
+      for denied in $BASE_SID_DENY; do
+        [ "$f" = "$denied" ] && bad="$f $bad"
+      done
+    done
+    
+  else
+  
+    echo "Assuming policy: Default Deny. Using variable BASE_SID_ALLOW" >> "$LOGF"
+    [ $verbosity ] && echo "    Assuming policy: Default Deny. Using variable BASE_SID_ALLOW"
+    local OK=0
+    for f in $files; do
+    
+      OK=0
+      for allowed in $BASE_SID_ALLOW; do
+        [ "$f" = "$allowed" ] && {
+          OK=1
+          break
+        }
+      done
+
+      [ $OK -eq 0 ] && bad="$f $bad"
+      
+    done
+    
+  fi
+
+  [ -n "$bad" ] || return $CODE_CONFORMITY 
+
+  backupFile "$bad" perm
+
+  n=`echo $bad | wc -w 2>> "$LOGE"`
+
+  echo "Found $n binaries to unset setuid bit."                  >> "$LOGF"
+  echo "Check log file for the complete list of affected files." >> "$LOGF"
+  echo "Setting correct permission on suid/sgid files..."        >> "$LOGF"
+  echo "Disabling suids and sgids:"                              >> "$LOGF"
+
+  [ $verbosity ] && {
+		echo "    Found $n binaries to unset setuid bit."
+		echo "    Check log file for the complete list of affected files."
+		echo "    Setting correct permission on suid/sgid files..."
+	}
+  for f in $bad; do
+    echo "chmod -s $f" >> "$LOGE"
+    setPerm $f "-s" || {
+			echo "FAILURE: Can not execute the command above" >> "$LOGF"
+			return $CODE_ERROR 
+		}
+  done
+  return $CODE_OK 
+
+}
+
+
+# unused
+########################
+follow_sym() {
+  [ $# -ne 1 ] && return 1
+
+  files=$1
+  real_files=""
+
+  for file in $files; do
+    [ ! -d "$file" ] && [ ! -f "$file" ] && [ ! -h "$file" ] &&  break
+
+    real_file=""
+    path=`ls -l $file`
+
+    is_sym=`printf "$path\n" | sed -n "s/^[ \t]\{0,\}l.\{1,\}->[ \t]\{0,\}\(.\{1,\}\)$/\1/p"`
+
+    if [ -n "$is_sym" ]; then
+      [ -f "$is_sym" ] && real_file=$is_sym
+    else
+      real_file=$file
+    fi
+
+    [ -n "$real_file" ] && {
+      if [ -n "$real_files" ]; then
+        real_files="$real_files
+$real_file"
+      else
+        real_files=$real_file
+      fi
+    }
+  done
+
+  printf "$real_files\n" | sort -u
+  return 0
+}
+########################
+
+collect_original_file_perm () {
+
+        original_file="$1"
+        is_sym=`ls -l $original_file | awk '$0 ~ /^l........./ { print $NF }'`
+        found_file="no"
+        count="0"
+
+        if [ -n "$is_sym" ]; then
+
+                while [ "$found_file" = "no" ]; do
+
+                        [ ! -f "$is_sym" ] && break
+                        [ "$count" -gt "4" ] && break
+
+                        count=`expr  "$count" \+ 1`
+                        check_file="$is_sym"
+                        is_sym=`ls -l $check_file | awk '$0 ~ /^l........./ { print $NF }'`
+
+                        if [ -z "$is_sym" ]; then
+
+                                file=`ls -l $check_file | awk '$0 ~ /^\-........./ { print $NF }'`
+                                found_file="yes"
+                        fi
+
+                done
+
+                echo "$file"
+        else
+
+                echo "$original_file"
+        fi
+}
+#
+
+find_gcc_compilers () {
+
+        path="/bin /sbin /usr/bin /usr/contrib/bin /usr/contrib/sbin /usr/local/bin /usr/local/sbin /usr/sbin /usr/xpg4/bin /usr/xpg4/sbin"
+
+        files_gcc=`find $path ! -type d -prune -name gcc \( -perm -g=x -o -perm -g=w -o -perm -o=x -o -perm -o=w \) 2>> "$LOGE"`
+        files_cc=`find $path ! -type d -prune -name cc \( -perm -g=x -o -perm -g=w -o -perm -o=x -o -perm -o=w \) 2>> "$LOGE"`
+        files=`echo "$files_gcc" "$files_cc" | tr " " "\n" | sort | uniq`
+        awk=`which awk`
+
+        echo "Searching compilers on: $path" >> "$LOGE"
+        [ -z "$files" ] && return ${CODE_CONFORMITY}
+
+        if [ -z "$awk" -a ! -f "/usr/bin/nawk" ]; then
+
+               return ${CODE_ERROR}
+        else
+
+                system=`uname -s`
+                [ "$system" = "SunOS" ] && {
+
+                        if [ -f "/usr/bin/nawk" ]; then
+
+                                awk="/usr/bin/nawk"
+
+                        else
+
+                                return ${CODE_ERROR}
+                        fi
+                }
+        fi
+
+        for file in ${files}; do
+
+                [ ! -f "$file" ] && [ ! -h "$file" ] && continue
+
+                orig_file_location=`dirname $file`
+                is_sym=`ls -l $file | $awk ' $0 ~ /^l........./ { print $NF } '`
+                found_file=""
+                real_file=""
+
+                if [ -n "$is_sym" ]; then
+
+                        add_path_prefix=`echo $is_sym | egrep "^[ \t\s]*\/"`
+                        dest_file="$is_sym"
+                        path_dest_file=`dirname "$original_file_location"`
+
+                        [ -z "$path_dest_file" ] || [ "$path_dest_file" = "." ] && path_dest_file="$orig_file_location"
+
+                        while [ -z "$found_file" ]; do
+
+                                if [ -z "$add_path_prefix" ]; then
+
+                                        is_sym_2=`ls -l $path_dest_file/$dest_file | $awk ' $0 ~ /^l........./ { print $NF } '`
+                                else
+
+                                        is_sym_2=`ls -l $dest_file | $awk ' $0 ~ /^l........./ { print $NF } '`
+                                fi
+
+                                if [ -n "$is_sym_2" ]; then
+
+                                        add_path_prefix=`echo $is_sym_2 | egrep "^[ \t\s]*\/"`
+                                        dest_file="$is_sym_2"
+                                        path_dest_file="$path_dest_file"
+
+                                        if [ -z "$add_path_prefix" ]; then
+
+                                                is_sym_2=`ls -l $path_dest_file/$dest_file | $awk ' $0 ~ /^l........./ { print $NF } '`
+                                        else
+
+                                                is_sym_2=`ls -l $dest_file | $awk ' $0 ~ /^l........./ { print $NF } '`
+                                        fi
+
+                                        [ -z "$is_sym_2" ] && {
+
+                                                real_file=`echo "$path_dest_file/$dest_file"`
+                                                found_file="ok"
+                                        }
+                                else
+
+                                        if [ -z "$add_path_prefix" ]; then
+
+                                                real_file=`echo "$path_dest_file/$dest_file"`
+                                        else
+
+                                                real_file=`echo "$dest_file"`
+                                        fi
+                                        found_file="ok"
+                                fi
+                        done
+                else
+
+                        real_file=`echo "$file"`
+                fi
+
+                [ -n "$real_file" ] && {
+
+                        if [ -n "$real_files" ]; then
+
+                                real_files="$real_files
+$real_file"
+                        else
+
+                                real_files=$real_file
+                        fi
+		}
+
+        done
+
+        printf "$real_files\n"
+        return 0
+}
+
+setCompilerPerm() {
+
+        files=`find_gcc_compilers`
+        [ -n "$files" ] && files=`echo $files | tr " " "\n" | sort | uniq`
+        [ -z "$files" ] && return ${CODE_CONFORMITY}
+	cmd=""
+
+	for f in ${files}; do
+
+		[ -f "$f" ] && {
+
+			owner_group=`ls -l "$f" | awk '{ print $3":"$4 }'`
+
+			if [ -n "$cmd" ]; then
+		
+				cmd="chown $owner_group $f ; $cmd"
+			else
+
+				cmd="chown $owner_group $f"
+			fi
+		} 
+	done
+
+        backupFile "$files" perm "$cmd"
+
+        for f in ${files}; do
+
+                [ ! -f "$f" ] && continue
+                if [ "X$BASE_COMPILER_GROUP" = "X" ]; then
+
+                        setPerm $f "go-rwx" || return 1
+                else
+
+                        egrep -q "^$BASE_COMPILER_GROUP\:" /etc/group 2>> "$LOGE" || {
+                        case "`uname`" in
+
+                                'AIX')  
+
+                                        mkgroup ${BASE_COMPILER_GROUP} 2>> "$LOGE" || {
+                                        [ $verbosity ] && echo "    Impossible to create group $BASE_COMPILER_GROUP"
+                                                echo "    Impossible to create group $BASE_COMPILER_GROUP" >> "$LOGF"
+                                                return ${CODE_ERROR}
+                                        }
+                                ;;
+
+                                *)
+
+                                        groupadd ${BASE_COMPILER_GROUP} 2>> "$LOGE" || {
+                                        [ $verbosity ] && echo "    Impossible to create group $BASE_COMPILER_GROUP"
+                                                echo "    Impossible to create group $BASE_COMPILER_GROUP" >> "$LOGF"
+                                                return ${CODE_ERROR}
+                                        }
+                                ;;
+                        esac
+                        }
+
+                        setOwner $f "bin:$BASE_COMPILER_GROUP" || return ${CODE_ERROR}
+                        setPerm $f "750" || return ${CODE_ERROR}
+                fi
+        done
+
+        return ${CODE_OK}
+}
+
+# remove o=r from log directories
+setLogPerm() {
+
+	echo "Searching files on log directories..." >> "$LOGF"
+	echo "    Searching files on log directories..."
+
+	files=`find /var/log/* /var/adm/* -prune -type f \( -perm -g=w -o -perm -o=w -o -perm -o=r \) | egrep -v "[uw]tmp[xs]" 2>> "$LOGE"`
+	dirs=`find /var/log/* /var/adm/* -prune -type d \( -perm -g=w -o -perm -o=w -o -perm -o=r \) 2>> "$LOGE"`
+	[ -n "$dirs" ] && files=`printf "%s\n%s\n" "$files" "$dirs" 2>> "$LOGE"`
+
+	extra_files=""
+	case "`uname 2>> $LOGE`" in
+
+		"Linux")
+			extra_perm=640
+			extra_files=`find /var/{adm,log}/{u,w}tmp{x,s,} -type f \( -perm -g=w -o -perm -o=r -o -perm -o=w \) 2>> "$LOGE"`
+		;;
+
+		"SunOS")
+			extra_perm=644
+			extra_files=`find /var/adm/[uw]tmp[xs] /var/log/[uw]tmp[xs] -type f \( -perm -g=w -o -perm -o=w \) 2>> "$LOGE"`
+		;;
+	esac
+
+        [ -n "$BASE_LOG_ALLOW" ] && {
+
+                BASE_LOG_ALLOW=`echo "$BASE_LOG_ALLOW" | tr ' ' '\n' | sort -u`
+                for ign in ${BASE_LOG_ALLOW}; do
+
+                        files=`echo "$files" | tr ' ' '\n' | awk -F'/' ' $NF !~ /'"^$ign"'/ { print }'`
+                        extra_files=`echo "$extra_files" | tr ' ' '\n' | awk -F'/' ' $NF !~ /'"^$ign"'/ { print }'`
+                done
+        }
+
+	# if no files its already done
+	[ -z "$files" ] && [ -z "$extra_files" ] && return $CODE_CONFORMITY 
+
+	[ -n "$files" ] && backupFile "$files" perm
+	[ -n "$extra_files" ] && backupFile "$extra_files" perm
+
+	echo "    Check log file for the complete list of affected files."
+	echo "    Setting correct permission on log files..."
+	echo "Disabling world readable files in log directories:" >> "$LOGF"
+
+	for f in ${files}; do
+
+		if [ -d "$f" ]; then 
+
+			echo "chmod 0750 $f" >> "$LOGE"
+			setPerm "$f" "0750" || return $CODE_ERROR
+		else
+
+			echo "chmod 0640 $f" >> "$LOGE"
+			setPerm "$f" "0640" || return $CODE_ERROR
+		fi
+	done
+
+	for f in $extra_files; do
+
+		echo "chmod $extra_perm $f" >> "$LOGE"
+		setPerm "$f" "$extra_perm" || return $CODE_ERROR
+	done
+	
+	return 0
+}
+
+# remove o=w from /etc dir files
+setEtcPerm() {
+
+	# find files
+	local files=`find /etc \( -type f -o -type d \) \( -perm -g=w -o -perm -o=w \) 2>> "$LOGE"`
+	local found_file=""
+	local except_file=""
+
+        if [ -n "$BASE_ETC_PERM_EXCEPTIONS" ]; then
+
+                local except_files=`echo "$BASE_ETC_PERM_EXCEPTIONS" | tr " " "\n" | sort -u`
+                for except_file in ${except_files}; do
+
+                        found_file=`echo ${files} | tr " " "\n" | egrep "^[ \t]*$except_file[ \t]*$"`
+                        [ -n "$found_file" ] && {
+
+                                files=`echo ${files} | tr " " "\n" | egrep -v "^[ \t]*$except_file[ \t]*$"`
+                        }
+                done
+        fi
+
+	# if no files its already done
+	[ -n "$files" ] || return ${CODE_CONFORMITY}
+
+	backupFile "$files" perm
+
+	for f in $files; do
+
+		setPerm $f "og-w"
+		[ $? -eq ${CODE_ERROR} ] && return ${CODE_ERROR}
+	done
+
+	return ${CODE_OK}
+}
+
+# set file/dir permission
+setPerm() {
+
+	[ $# -lt 2 ] && return 1
+  
+  file="$1"
+  perm="$2"
+  cmd="chmod $perm $file"
+
+  echo "Executing: $cmd" >> "$LOGF"
+  [ $verbosity ] && echo "    Executing: $cmd"
+  $cmd 2>> "$LOGE"
+
+  if [ $? -eq 0 ]; then
+    return $CODE_OK 
+  else
+    return $CODE_ERROR 
+  fi
+
+}
+
+setOwner() {
+
+	[ $# -lt 2 ] && return $CODE_ERROR
+
+  file="$1"
+  owner="$2"
+  cmd="chown $owner $file"
+
+  echo "     Executing: $cmd" >> "$LOGF"
+  [ $verbosity ] && echo "     Executing: $cmd"
+  $cmd 2>> "$LOGE"
+
+  if [ $? -eq 0 ]; then
+    return $CODE_OK 
+  else
+    return $CODE_ERROR 
+  fi
+}
+
+# modify a line on a configuration
+# 
+# $1 -> file
+# $2 -> regex/pattern
+# $3 -> line to apply
+# $4 -> baseline value to validate
+ 
+# FIXME- Se for passado $4, eh procurado por esse valor dentro do arquivo, nao importa aonde.
+# Faz-se necessario incluir esse valor no contexto da procura.
+# Ex.: O arquivo file tem no seu conteudo:
+# A=101
+# B=102
+# Se $4 for 102, mas o contexto tiver relacao com a opcao A, a funcao setLine vai retornar como 
+# conforme.
+
+setLine() {
+
+	[ $# -lt 3 ] && return $CODE_ERROR
+
+  file="$1"
+  regex="$2"
+  line="$3"    # if equal "#" it will comment out the matching line
+  value="$4"  # optional
+  isWritable="yes"
+
+
+  [ -w "$file" ] || {
+    echo "Making file $file writable" >> "$LOGF"
+    [ $verbosity ] && echo "    Making file $file writable"
+    echo "    chmod +w $file" 2>> "$LOGE"
+    isWritable="no"
+  }
+
+  # test writable
+  echo_n 2>> "$LOGE" >> $file || return $CODE_ERROR 
+
+  [ -n "$value" ] && {
+    grep "$value" $file > /dev/null 2>> "$LOGE"
+    [ $? -eq 0 ] && return $CODE_CONFORMITY 
+  }
+
+  awk -v VALUE="$value" -v LOGF="$LOGE" -v LINE="$line" -v FILE="$file" -v REGEX="$regex" '
+  BEGIN {
+    NOCONF=1
+    CHANGE=0
+    "mktemp /tmp/correction.XXXXXX" | getline OUT
+  }
+
+  {
+
+    if(match($0, REGEX)) {
+      NOCONF=0
+      if(length(VALUE)) {
+        # change only if value differ from baseline
+        if(!match($0,VALUE)) {
+          CHANGE=1
+          print LINE >> OUT
+        } else {
+          print $0 >> OUT
+        }
+      } else {
+        CHANGE=1
+        # check if has only to disable/comment out the line
+        if(LINE == "#") {
+          # just add a # on the beginning of the line
+          print "# " $0 >> OUT
+        } else {
+          # change the entire line for the new value(LINE)
+          print LINE >> OUT
+        }
+      }
+    } else {
+      print $0 >> OUT
+    }
+
+  }
+
+  END {
+
+    # if no conf found and new cond differ from "#", add the new line
+    if( NOCONF && (LINE != "#") ) {
+      CHANGE=1
+      print LINE >> OUT
+    }
+
+    if(CHANGE)
+      CMD="cat " OUT " > " FILE " && rm -f " OUT
+    else
+      CMD="rm -f " OUT
+
+    close(OUT)
+
+    if(system(CMD)) {
+      print "Error executing: " CMD >> LOGF
+      print "Perhaps " FILE " has no writing permission" >> LOGF
+      exit 1
+    }
+
+    # already done or in accordance
+    # if conf not found and line = # and no changes
+    # if conf found and no changes
+    if( ( (NOCONF==0) || (NOCONF && (LINE == "#")) ) && (CHANGE==0) )
+      exit 22
+    
+  }' $file 2>> "$LOGE"
+  
+  retval=$?
+  
+  if [ "$isWritable" = "no" ]; then
+    echo "    chmod -w $file" 2>> "$LOGE"
+    chmod -w "$file" 2>> "$LOGE"
+  fi
+
+  # grab awk return value
+  return $retval
+}
+
+
+# print help/usage msg
+usage() {
+  banner
+  cat <<END
+Usage: $0 [Options]
+
+Available Options:
+
+-h      Show help/usage message
+-v      Be verbose
+
+-y      Run in non-interactively mode
+-i "n1 n2 ..."    Apply only the specified routine IDs
+-e "n1 n2 ..."    Exclude specified routine IDs
+
+-c      Force backup directory creation
+-b "Dir"    Backup directory path (Default=/var/security/backup)
+-n      Run without creating backup
+
+-f "File"    Custom log file path
+
+END
+  exit 1
+}
+
+# ask a queston and returns 0(true) if [yY] on answer
+yn() {
+  echo_n "$1 (y/n)[n] "
+  read
+
+	[ -z "$REPLY" ] && return 1
+
+  case $REPLY in
+    [yY])
+      return 0
+      ;;
+    [nN])
+      return 1
+      ;;
+		*)
+		  yn "$1"
+			;;
+  esac
+}
+
+# trap
+cleanup() {
+  echo
+  echo "[-] Exting on term/quit signal..."
+  exit 1
+}
+
+# confirm script running
+# prepare backup dir and logfile
+# turn on trap triggers
+startup() {
+  
+#  [ "$interactive" = "no" ] || {
+#
+#    echo "Please answer to [y/n] questions below to continue:"
+#
+#    yn "Confirm script running?" || {
+#      echo "[-] Exiting on user option..."
+#      exit 1
+#    }
+#  }
+
+  # check target OS
+  #[ "$interactive" = "yes" ] && {
+  [ "$started_with_options" -eq "0" ] && {
+
+         [ "$OS" = "$TARGET_OS" ] || {
+
+                echo "[-] This script is made to work with $TARGET_OS operating systems"
+                echo "[-] OS detected on this machine: $OS"
+                echo "[-] Exiting..."
+                exit 1
+        }
+  }
+
+  # superuser?
+  [ `id -u` -ne 0 ] && {
+    echo
+    echo "[-] You need to be superuser(id=0) to continue"
+    echo "[-] Exiting..."
+    exit 1
+  }
+
+  if [ "$rollback_mode" = "off" ]; then
+
+  	START=`date '+%d%m%Y-%T'`
+  fi
+
+  echo
+  echo "[+] Starting session on $START"
+  echo
+
+  umask $UMASK
+
+  # check if has to verify backup dir
+  [ $nobackup ] || {
+    # backup dir preparation
+    # check if dir exists
+    [ -d $BACKUP_DIR ] || {
+
+      echo "[-] Backup directory $BACKUP_DIR does not exist"
+      
+      # forcebackup option
+      if [ $forcebackup ]; then
+        echo "[+] Force option enabled"
+        echo_n "    Creating directory $BACKUP_DIR: "
+        mkdir -p $BACKUP_DIR || {
+          echo "Not Ok"
+          echo "[-] Could not create backup directory: $BACKUP_DIR"
+          echo "[-] Exiting..."
+          exit 1        
+        }
+        echo "Ok"
+        echo
+      else
+        echo "[-] Create it or use \"-c\" option to force dir creation"
+        echo "[-] Exiting..."
+        exit 1
+      fi
+    }
+
+    # check if it is writable
+    [ -w $BACKUP_DIR ] || {
+      echo "[-] Backup directory $BACKUP_DIR is not writable"
+      echo "[-] Exiting..."
+      exit 1
+    }
+
+    # new backup dir
+    BACKUP_DIR="$BACKUP_DIR/$START"
+    
+    # check if custom logfile location is set otherwise logfile
+    # will be located on session's backup directory
+    [ -n "$CLOGF" ] || LOGF="$BACKUP_DIR/sessionlog"
+    [ -n "$CLOGE" ] || LOGE="$BACKUP_DIR/sessionlog.err"
+  }
+
+  [ -n "$CLOGF" ] && LOGF="$CLOGF"
+  [ -n "$CLOGE" ] && LOGE="$CLOGE"
+
+  
+
+
+
+  # ready to continue
+
+  # trap it
+  # SIGINT        2       Term    Interrupt from keyboard
+  # SIGQUIT       3       Core    Quit from keyboard
+  # SIGKILL       9       Term    Kill signal
+  # SIGTERM      15       Term    Termination signal
+
+  trap cleanup 2 3 9 15 
+
+  return
+}
+
+# Make backup of file(s)
+# $1 -> item id
+# $2 -> List of files
+# $3 -> Type
+# #4 -> Restore state command(optional)
+#
+# Avaiable Types:
+# perm -> Backup permissions
+# data -> Backup file content
+backupFile() {
+
+  local IFS=" 
+"
+  # nobackup option
+  [ $nobackup ] && return 0
+
+  [ -z "$id" ] && return 1
+
+  _id=$id
+  _files="$1"
+  _type="$2"
+  _cmd="$3"  # opt
+  _types="perm data"
+  _typeok=0 
+  _cont=0
+  _file="" 
+  _target=""
+  _force_no_verbosity=1
+
+  # need at least 2 args
+  [ $# -lt 2 ] && {
+    echo "Insuficient arguments to backupFile() function" >> "$LOGF"
+    [ $verbosity ] && {
+      echo "[-] Insuficient arguments to backupFile() function"
+      echo "[-] Check log file $LOGF or error log file $LOGE"
+      echo "[-] Exiting..."
+    }
+    exit 1
+  }
+
+  for _i in $_types; do
+    [ "$_i" = "$_type" ] && _typeok=1
+  done
+
+  [ "$_typeok" = "1" ] || {
+    echo "Wrong type value ($_type) for backupFile() function" >> "$LOGF"
+    [ $verbosity ] && {
+      echo "[-] Wrong type value for backupFile() function"
+      echo "[-] Check log file $LOGF or error log file $LOGE"
+      echo "[-] Exiting..."
+    }
+    exit 1
+  }
+
+  # /global/time/id/target struct creation
+  [ -d "$BACKUP_DIR/$_id" ] || {
+    mkdir "$BACKUP_DIR/$_id" 2>> "$LOGE" || {
+      echo "[-] Could not create $BACKUP_DIR/$_id directory" >> "$LOGE"
+      [ $verbosity ] && {
+        echo "[-] Could not create $BACKUP_DIR/$_id directory"
+        echo "[-] Check log file $LOGF or error log file $LOGE"
+        echo "[-] Exiting..."  
+      }
+      exit 1
+    }
+  }
+
+  # ready
+  [ $verbosity ] && echo "    [+] Running backup process..."
+
+  [ -z "$_files" ] && [ -n "$_cmd" ] && {
+    _files=`mktemp /tmp/correction.XXXXXX 2>> "$LOGE"`
+    _cmd="${_cmd};rm $_files 2> /dev/null"
+    _force_no_verbosity=0
+  }
+  
+  # write item description
+  code="${SUBCODE[$_id]}"
+  eval item_desc=$`echo NAME_${code}`
+  echo "$item_desc" > "$BACKUP_DIR/$_id/name" 2>> "$LOGE"
+
+ 
+  [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Backup: [$_type] [$_files]" >> "$LOGF"
+
+  for _file in $_files; do
+
+    [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Backup $type $_file " >> "$LOGF"
+    [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo_n "    Backup $_type $_file: "
+
+    [ -f "$_file" -o -d "$_file" ] || {
+      echo " not found." >> "$LOGF"
+      [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo " not found."
+      continue
+    }
+
+    case $_type in
+      perm)
+
+        _cont=`ls $BACKUP_DIR/$_id/*.perm 2>/dev/null | wc -l | sed "s/[ \t]//g"`
+        _cont=`expr $_cont + 1`
+        _target="$BACKUP_DIR/$_id/$_cont.perm"
+
+        # write restore command
+        [ -n "$_cmd" ] && {
+          echo "$_cmd" > "$BACKUP_DIR/$_id/${_cont}.cmd" 2>> "$LOGE" || {
+            echo "[-] Could not store restore command" >> "$LOGF"
+            [ $verbosity ] && {
+              echo "[-] Could not store restore command"
+              echo "[-] Check log file $LOGF or error log file $LOGE"
+              echo "[-] Exiting..."
+      	    }
+            exit 1
+          }
+        }
+
+
+        # check if already done
+        for _done in $_perm_done; do
+          [ "$_done" = "$_file" ] && {
+            echo "Already done" >> "$LOGF"
+            [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Already done"
+            # go to next file
+            continue 2
+          }
+        done
+
+        if \ls -dl "$_file" 2>> "$LOGE" >> "$_target"; then
+          [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Ok"
+          _perm_done="$_file $_perm_done"    
+          continue
+        else
+  	  echo "Not Ok" >> "$LOGF"
+          [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && {
+	    echo "Not Ok"
+	    echo "[-] Fatal error."
+	    echo "[-] Backup of $file not possible. Check log file $LOGF or error log file $LOGE"
+	    echo "[-] Exiting..."
+	  }
+          exit 1
+        fi
+        ;;
+      data)
+
+        _cont=`ls $BACKUP_DIR/$_id/*.data 2>/dev/null | wc -l | sed "s/[ \t]//g"`
+        _cont=`expr $_cont + 1`
+        _target="$BACKUP_DIR/$_id/$_cont.data"
+
+        # write restore command
+        [ -n "$_cmd" ] && {
+          echo "$_cmd" > "$BACKUP_DIR/$_id/${_cont}.cmd" 2>> "$LOGE" || {
+            echo "[-] Could not store restore command" >> "$LOGF"
+            [ $verbosity ] && {
+              echo "[-] Could not store restore command"
+              echo "[-] Check log file $LOGF or error log file $LOGE"
+              echo "[-] Exiting..."
+      	    }
+            exit 1
+          }
+        }
+
+
+        # check if already done
+
+	_data_done=""
+	_done=""
+
+        for _done in $_data_done; do  # data/tar already saved
+          [ "$_done" = "$_file" ] && [ ! -f "$_target" ] && {
+           
+            # bk already exists, so create symbolic link
+            for _bkdone in $BACKUP_DIR/*/*_path; do
+              [ "`cat $_bkdone 2>/dev/null`" = "$_file" ] &&  {
+                echo "Already done. Linking..." >> "$LOGF"
+                [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Already done. Linking..."
+ 
+
+		_targetlink="${_bkdone%_path}.data"
+                ln -fs $_targetlink $_target 2>> "$LOGE" || {
+                  echo "[-] Fatal error when linking: $_target -> $_targetlink" >> "$LOGF"
+	    	  [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && {
+                    echo "[-] Fatal error when linking: $_target -> $_targetlink"
+                    echo "[-] Backup of $file not possible. Check log file $LOGF or error log file $LOGE" 
+                    echo "[-] Exiting..."
+                  }
+                  exit 1
+                }
+                # go to next file
+                continue 3
+              }
+            done
+            
+            # go to next file
+            continue 2
+          }
+        done
+
+        # check if already done
+        for _done in $_notfound_done; do
+          [ "$_done" = "$_file" ] && {
+            echo "Already done. Linking..." >> "$LOGF"
+            [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Already done. Linking..."
+            
+            # bk already exists, so create symbolic link
+            for _bkdone in $BACKUP_DIR/*/*_path; do
+              [ "`cat $_bkdone 2>/dev/null`" = "$_file" ] && {
+                _targetlink="${_bkdone%_path}.notfound"
+                _target=${_target%.data}.notfound
+                ln -s $_targetlink $_target 2>> "$LOGE" || {
+                  echo "[-] Fatal error when linking: $_target -> $_targetlink" >> "$LOGF"
+                  [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && {
+                    echo "[-] Fatal error when linking: $_target -> $_targetlink"
+                    echo "[-] Backup of $file not possible. Check log file $LOGF or error log file $LOGE"
+                    echo "[-] Exiting..."
+                  }
+                  exit 1
+                }
+                # go to next file
+                continue 3
+              }
+            done
+            
+            # go to next file
+            continue 2
+          }
+        done
+
+        # if file does not exist and
+        # store file path for possible remove on restore
+        [ -f $_file ] || {
+          _target=${_target%.data}
+          if echo "$_file" 2>> "$LOGE" >> "$_target.notfound" && echo "$_file" > ${_count}_path 2>> "$LOGE"; then
+            echo "Ok" >> "$LOGF"
+            [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Ok"
+            _notfound_done="$_file $_notfound_done"
+            continue
+          else
+	    echo "Not Ok" >> "$LOGF"
+            [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && {
+	      echo "Not Ok"
+	      echo "[-] Fatal error."
+	      echo "[-] Backup of $_file not possible. Check log file $LOGF"
+	      echo "[-] Exiting..."
+	    }
+            exit 1
+          fi
+        }
+
+        # -h = follow symlink
+        tar $TAR_PARAM "$_target" "$_file" >> "$LOGE" 2>&1 && echo "$_file" > ${_count}_path 2>> "$LOGE"
+        if [ $? -eq 0 ]; then
+          [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && echo "Ok"
+          _data_done="$_file $_data_done"
+          continue
+        else
+	  echo "Not OK" >> "$LOGF"
+          [ $_force_no_verbosity -eq 1 ] && [ $verbosity ] && {
+            echo "Not Ok"
+            echo "[-] Fatal error."
+            echo "[-] Backup of $file not possible. Check log file $LOGF"
+            echo "[-] Exiting..."
+          }
+          exit 1
+        fi
+        ;;
+    esac
+  done
+
+  return
+
+}
+
+
+# change contents of a file
+# $1 -> file
+# $2 -> new content
+setContent() {
+
+  [ $# -lt 1 ] && return $CODE_ERROR
+
+  local file="$1"
+  local content="$2"  # optional
+
+  # test already applied
+  if [ -n "$content" ]; then
+
+		file_content=`cat $file 2>> "$LOGE"`
+
+    [ "$file_content" = "$content" ] && return $CODE_CONFORMITY 
+    # apply
+    echo "$content" 2>> "$LOGE" > $file
+    return
+  
+  else
+    
+    [ -s $file ] || return $CODE_CONFORMITY 
+    # apply
+    echo_n 2>>"$LOGE" > $file
+    return
+  fi
+
+}
+
+# change umask value on /etc/profile
+setUmask() {
+
+  _file="$1"
+  _mask="$2"
+
+	[ ! -f "$_file" ] && return $CODE_MISSED_FILE
+
+	_umask=`sed -n '/^[ \t]\{0,\}umask[ \t]\{1,\}[0-9]\{1,\}/p' $_file 2>> "$LOGF" | tail -1` 
+
+	if [ -n "$_umask" ]; then
+
+		_umask_value=`echo $_umask | sed -n 's/^[ \t]\{0,\}umask[ \t]\{1,\}\([0-9]\{1,\}\).*/\1/p' 2>> "$LOGF"`
+		[ -z "$_umask_value" ] && {
+
+			echo "Failure retrieving umask value from $_file." >> "$LOGF"
+			echo "umask value from file: $_umask" >> "$LOGF"
+			return ${CODE_ERROR}
+		}
+
+
+		[ "$_umask_value" = "$_mask" ] && {
+
+			return ${CODE_CONFORMITY}
+		}
+
+		[ "$_umask_value" -lt "$_mask" ] && {
+
+			_tmp_file=`mktemp /tmp/correction.XXXXXX 2>> "$LOGF"`
+			sed "s/^\([ \t]\{0,\}umask\)[ \t]\{1,\}[0-9]\{1,\}\(.\{0,\}\)/\1 $_mask \2/" $_file > $_tmp_file 2>> "$LOGF" && { 
+  			
+				cat $_tmp_file > $_file 2>> "$LOGF"
+			}
+
+			rm $_tmp_file 2>> "$LOGF"
+		}
+	else
+
+		echo "umask $_mask" >> $_file 2>> "$LOGF"
+	fi
+
+	return ${CODE_OK}
+}
+
+##### Restore Subroutines
+
+restoreState() {
+        local cmd="$1"
+
+        local buff=`cat $cmd 2>> "$backupLogFile"`
+
+        path=`dirname $cmd`
+        n=`basename $cmd | sed -n "s/\([0-9]\{1,\}\)\.cmd/\1/p"`
+        name=`cat $path/name 2>> "$backupLogFile"`
+
+        if [ -n "$n" ]; then
+          echo "[+] Restoring state for routine: $name"
+        else
+          echo "[+] Restoring state of file #${n} for routine: $name"
+        fi
+
+        eval "$buff" >> "$backupLogFile" 2>&1
+        return
+
+}
+
+ls_to_chmod () {
+
+  [ $# -lt 1 ] && return 1
+
+  file=$1
+
+  ls -l $file 2>> "$LOGE" | $AWK '
+
+    BEGIN {
+      "uname -s" | getline OS
+    }    
+
+    {    
+      #last field from ls -l command must be the file path
+      F=$NF 
+
+      if(F == "." || F == "..")
+        next 
+
+      P=$1 
+      U=substr(P,2,3); G=substr(P,5,3); O=substr(P,8,3)
+
+      # u=xs para SUID
+      gsub(/s/,"xs",U)
+      gsub(/s/,"xs",G)
+
+      gsub(/-/,"",U); gsub(/-/,"",G); gsub(/-/,"",O)
+
+      if(match(OS,/HP-UX/)){
+              if(length(U))
+                      CHMOD="chmod u=" U
+              else
+                      CHMOD="chmod u-rwxs"
+              if(length(G))
+                      CHMOD=CHMOD ",g=" G
+              else
+                      CHMOD=CHMOD ",g-rwxs"
+              if(length(O))
+                      CHMOD=CHMOD ",o=" O
+              else
+                      CHMOD=CHMOD ",o-rwxt"
+              CHMOD=CHMOD " " F
+      } else {
+              CHMOD="chmod u=" U ",g=" G ",o=" O " " F
+      }
+
+      # sticky bit
+      if(match(CHMOD,"rwt"))
+              CHMOD="chmod 1777 " F
+
+      print CHMOD
+  }' 2>> "$LOGE"
+
+
+}
+
+
+restorePerm() {
+
+        local F="$1"
+
+        oldpwd=`pwd`
+        # just in case of relative paths
+        cd / || {
+                echo "[-] Cannot change to root dir: /"
+                echo "[-] Exiting..."
+                exit 1
+        }
+
+        local cmd=`grep "[-d]\{1\}[-rwxtsS]\{9\}" "$F" | $AWK '
+
+        BEGIN {
+                "uname -s" | getline OS
+        }
+
+        {
+								#last field from ls -l command must be the file path
+								F=$NF 
+
+                if(F == "." || F == "..")
+									next
+
+                P=$1
+                U=substr(P,2,3); G=substr(P,5,3); O=substr(P,8,3)
+
+                # u=xs para SUID
+                gsub(/s/,"xs",U)
+                gsub(/s/,"xs",G)
+
+                gsub(/-/,"",U); gsub(/-/,"",G); gsub(/-/,"",O)
+
+                if(match(OS,/HP-UX/)){
+                        if(length(U))
+                                CHMOD="chmod u=" U
+                        else
+                                CHMOD="chmod u-rwxs"
+                        if(length(G))
+                                CHMOD=CHMOD ",g=" G
+                        else
+                                CHMOD=CHMOD ",g-rwxs"
+                        if(length(O))
+                                CHMOD=CHMOD ",o=" O
+                        else
+                                CHMOD=CHMOD ",o-rwxt"
+                        CHMOD=CHMOD " " F
+                } else {
+                        CHMOD="chmod u=" U ",g=" G ",o=" O " " F
+                }
+
+                # sticky bit
+                if(match(CHMOD,"rwt"))
+                        CHMOD="chmod 1777 " F
+
+                print CHMOD
+        }'`
+
+        # executes chmod command
+        echo "Restoring perm: $cmd" >> "$backupLogFile"
+        eval $cmd 2>> "$backupLogFile"
+        ret_code=$?
+
+        cd $oldpwd
+
+        # return code
+        return
+}
+
+restoreData() {
+
+        local F="$1"
+
+        oldpwd=`pwd`
+        cd / || {
+                echo "[-] Cannot change to root dir: /"
+                echo "[-] Exiting..."
+                exit 1
+        }
+
+        _dir=`dirname $F`
+        _file=`basename $F`
+
+        cd "$_dir"
+        if [ "$OS" = "Linux" ]; then
+                tar --force-local -xvf "$_file" -C / >> "$backupLogFile" 2>&1
+        else
+
+		if [ "$OS" = "AIX" ]; then
+
+			tar xf "$_file" >> "$backupLogFile" 2>&1
+		else
+
+                	tar -xvf "$_file" -C / >> "$backupLogFile" 2>&1
+		fi
+        fi
+        #cd /
+        cd "$oldpwd"
+
+        return
+}
+
+# Restore backup file
+# $1 -> file
+restore() {
+
+        local file="$1"
+        local type=""
+
+        local available="data perm notfound"
+        local typeok=0
+
+        # check if exist
+        [ -f "$file" ] || {
+                echo "[-] File $file does not exist"
+                echo "[-] Error inside restoreFile() subroutine"
+                echo "[-] Exiting..."
+                exit 1
+        }
+
+        type=${file##*.}
+
+	available=`echo "$available" | tr ' ' '\n'`
+        for i in ${available}; do
+                [ "$type" = "$i" ] && typeok=1
+        done
+
+        [ "$typeok" = "1" ] || {
+                echo "[-] Wrong file type detected: $type"
+                echo "[-] Unable to restore file $file"
+                echo "[-] Exiting..."
+                exit 1
+        }
+
+        # ready
+        echo >> "$backupLogFile"
+        echo "Restoring Backup: [$type] [$file]" >> "$backupLogFile"
+
+        echo_n "[+] Restoring $type $file: "
+        case $type in
+                # restore permission of file
+                perm)
+                        restorePerm "$file"
+                        return
+                        ;;
+                # restore content(tar)
+                data)
+                        restoreData "$file"
+                        return
+                        ;;
+                # file was empty before, so, remove it
+                notfound)
+                        target_file=`cat $file` || {
+                                echo "[-] Unable to open $file"
+                                echo "[-] Exiting..."
+                                exit 1
+                        }
+                        if [ -f "$target_file" -o -d "target_file" ]; then
+                                rm -rf "$target_file" 2>> "$backupLogFile"
+                                return
+                        else
+                                return 0
+                        fi
+                        ;;
+        esac
+
+}
+
+restore_backup() {
+
+	if [ "$rollback_mode" = "off" ]; then
+
+		if [ -n "$1" ]; then
+
+			SESSION="$backupDirectory/$sessionDir/$1"
+		else
+
+			SESSION="$backupDirectory/$sessionDir"
+		fi
+
+  		START=`date '+%d%m%Y-%T'`
+	fi
+
+  [ -d "$SESSION" ] || {
+    echo " [-] Invalid session: $SESSION"
+    echo " [-] Directory does not exist"
+    echo " [-] Returning..."
+    return $CODE_ERROR 
+  }
+
+  dirs=$SESSION/[0-9]*
+  exist_dir=0
+
+  for dir in $dirs; do
+    [ -d $dir ] && {
+      exist_dir=1
+      break
+    }
+  done
+
+  [ "$exist_dir" = "1" ] || {
+    echo "No available routines to restore. Choose other session"
+    return $CODE_ERROR 
+  }
+
+  [ $verbosity ] && echo "  [+] Starting restore session on $START"
+
+  echo >> "$backupLogFile"
+  echo "------------------------------------------------" >> "$backupLogFile"
+  echo "[+] Starting restore session on $START" >> "$backupLogFile"
+  echo "  [+] Using logfile $backupLogFile"
+
+  SELECTEDIDS=""
+
+  for file in $SESSION/*; do
+    id=${file##*/}
+    expr "$id" : '[0-9]\{1,4\}' > /dev/null 2>&1 || continue
+
+    idlen=${#id}
+    pad=`expr 4 - $idlen`
+
+    while [ $pad -gt 0 ]; do
+      echo_n " "
+      pad=`expr $pad - 1`
+    done
+
+    if [ -f "$SESSION/$id/name" ]; then
+      desc=`cat "$SESSION/$id/name"`
+    else
+      desc="No description available"
+    fi
+
+    if [ "$interactiveRestore" = "yes" ]; then
+      echo_n "$id => "
+      yn "  [*] Restore item: ${desc}. Restore?" || continue
+    else
+      echo "$id => [*] Restore item: ${desc}."
+    fi
+
+    SELECTEDIDS="$SELECTEDIDS $id"
+  done
+
+  [ -z "$SELECTEDIDS" ] && {
+    echo "  [-] Nothing to do."
+    echo "  [-] Returning..."
+    return 1
+  }
+
+  echo "  [+] Restoring routines: $SELECTEDIDS"
+  echo "  [+] Restoring routines: $SELECTEDIDS" >> "$backupLogFile"
+
+  FILES=""
+  CMDFILES=""
+
+  for id in $SELECTEDIDS; do
+    [ -d "$SESSION/$id" ] || {
+      echo "  [-] Restore routine not available: $SESSION/$id"
+      echo "  [-] Ignoring..."
+                        continue
+    }
+
+    FILES=`ls $SESSION/$id/* 2>/dev/null | egrep "[0-9]+\.(perm|data)" 2>/dev/null ; echo ${FILES}` || {
+      echo "  [-] Problems processing dir: $SESSION/$id"
+      echo "  [-] No data found"
+      echo "  [-] Ignoring..."
+                }
+    
+    #[ -s $SESSION/$id/cmd ] && CMDFILES="$CMDFILES $SESSION/$id/cmd"
+    for cmd_file in `ls $SESSION/$id/*cmd 2> /dev/null`; do
+      CMDFILES="$CMDFILES $cmd_file"
+    done
+  done
+
+  echo "  [+] Restoring files..."
+  echo
+
+  for file in ${FILES}; do
+
+          echo "  [+] Processing: $file"
+
+          restore "$file"
+          RET=$?
+
+          case $RET in
+                  0)
+                          echo "Ok"
+                          ;;
+                  1)
+                        echo "Not Ok"
+                        echo "[-] Check log file $backupLogFile"
+                        ;;
+                  127)
+                        echo "Error executing eval() command"
+                        echo "[-] Check log file $backupLogFile"
+                        ;;
+                  *)
+                        echo "Unknown status returned"
+                        echo "[-] Check log file $backupLogFile"
+                        ;;
+          esac
+          echo
+  done
+
+  echo "  [*] Finished restoring files"
+  echo
+  
+  echo "  [+] Restoring state..."
+  echo
+  
+  for cmd in $CMDFILES; do
+  
+    [ -s $cmd ] || continue
+  
+    restoreState "$cmd"
+    RET=$?
+  
+    echo_n "    Status: "
+  
+    case $RET in
+      0)
+                  echo "Ok"
+                  ;;
+                  1)
+                  echo "Not Ok"
+                  echo "  [-] Check log file $backupLogFile"
+                  ;;
+                  127)
+                  echo "Error code 127 returned. File not found."
+                  echo "  [-] Check availability of files executed during transaction"
+                  echo "  [-] Check log file $backupLogFile"
+                  ;;
+                  *)
+                  echo "Unknown status returned"
+                  echo "  [-] Check log file $backupLogFile"
+                  ;;
+          esac
+          echo
+  done
+
+  echo "  [*] Finished restoring state"
+  echo
+
+  return 0
+}
+
+
+load_itens_ssh() {
+  itens=`sed "/^#/d; /^$/d; s/$BLANK_SED\{1,\}\(.\{1,\}\)$/=\"\1\"/" "$sshFile"`
+  eval $itens
+}
+
+clean_itens_ssh() {
+  local variables="IgnoreRhosts LogLevel PermitEmptyPasswords PermitRootLogin Protocol RhostsRSAAuthentication SyslogFacility TCPKeepAlive UsePrivilegeSeparation"
+
+  for var in $variable; do
+    eval "$var=\"\""
+  done
+}
+
+# apply security settings for each ID
+apply_corrections() {
+
+	local dir
+	local ant
+
+	# create subdir based on script startup time
+	[ -d "$BACKUP_DIR" ] || {
+
+		save_IFS=$IFS
+		IFS='/'
+
+		for dir in ${BACKUP_DIR}; do
+
+			d=$ant"/"$dir
+
+			[ -d "$d" ] || {
+
+				mkdir "$d" || {
+
+					[ $verbosity ] && {
+
+						echo "[-] Could not create session directoty: $BACKUP_DIR"
+						echo "[-] Exiting..."
+					}
+
+					exit 1  
+				}
+			}
+
+			ant="$d";
+		done
+
+		unset ant
+		IFS=$save_IFS
+	}
+
+	# logfile preparing
+	[ -s "$APP_PATH/.version" ] && {
+
+		APP_VERSION=`cat "$APP_PATH/.version"`
+
+		echo "# Running version $APP_VERSION" >> "$LOGF"  || {
+
+			[ $verbosity ] && {
+
+				echo "[-] Problems writing to logfile $LOGF"
+				echo "[-] Exiting..."
+			}
+
+			exit $CODE_ERROR 
+		}
+	}
+
+	# the test above is duplicated below in case of .version doesn't exist
+	echo "# Starting session on $START" >> "$LOGF" || {
+
+		[ $verbosity ] && {
+
+			echo "[-] Problems writing to logfile $LOGF"
+			echo "[-] Exiting..."
+		}
+
+		exit $CODE_ERROR 
+	}
+  
+ 	# Copy baseline to the $BACKUP_DIR
+	if [ -f "$baseline_file" ]; then
+
+		echo "# Copying $baseline_file to $BACKUP_DIR" >> "$LOGF"
+		cp "$baseline_file" "$BACKUP_DIR/Baseline" || {
+
+ 			echo "[-] Could not copy baseline file: $baseline_file - Error copying file"
+			echo "[-] Exiting..."
+			echo "Could not copy baseline file: $baseline_file - Error copying file" >> "$LOGE"
+			exit $CODE_ERROR
+		}
+	else
+		[ $verbosity ] && {
+
+			echo "[-] Could not copy baseline file: $baseline_file - File not found"
+			echo "[-] Exiting..."
+			echo "Could not copy baseline file: $baseline_file - File not found" >> "$LOGE"
+		}
+
+		exit $CODE_ERROR
+	fi
+ 
+
+	for id in ${BASE_IDS}; do
+
+		code=${SUBCODE[$id]}
+
+		# log
+		echo >> "$LOGF"
+    		echo "Item ${SUBCODE[$id]}" >> "$LOGF"
+    		echo "---------------------------------------" >> "$LOGF"
+
+    		echo >> "$LOGE"
+    		echo "Item ${SUBCODE[$id]}" >> "$LOGE"
+    		echo "---------------------------------------" >> "$LOGE"
+
+
+	  	[ -n "$BASELINE_IGNORE_ID_LIST" ] && {
+
+			BASELINE_IGNORE_ID_LIST=`echo "$BASELINE_IGNORE_ID_LIST" | tr "," "\n" | sort -u`
+			echo "$BASELINE_IGNORE_ID_LIST" | egrep -q "^[ \t]*$code[ \t]*$" && {
+
+				echo "Not applied by user's choice (ignore list from prompt parameter)." >> "$LOGF"
+				continue
+			}
+	  	}
+
+
+		[ -n "$BASELINE_ID_LIST_FILTER" ] && {
+
+			BASELINE_ID_LIST_FILTER=`echo "$BASELINE_ID_LIST_FILTER" | tr "," "\n" | sort -u`
+			echo "$BASELINE_ID_LIST_FILTER" | egrep -q "^[ \t]*$code[ \t]*$" || {
+
+				echo "Not applied by user's choice (parameter execution)." >> "$LOGF"
+				continue
+			}
+	  	}
+
+
+		[ -n "$RISK_LEVEL_FILTER" ] && {
+
+			lang=`cat .lang`
+			RISK_LEVEL_FILTER=`echo "$RISK_LEVEL_FILTER" | tr "," "\n" | sort -u`
+		
+			# loading item risk
+                        eval item_risk=$`echo RISK_${code}`
+			[ -z "$item_risk" ] && continue
+
+			skip=0
+			for risk in ${RISK_LEVEL_FILTER}; do
+
+				case $risk in
+
+					"low")
+
+					if [ "$lang" = "pt_BR" ] && [ "$item_risk" = "Baixo" ]; then 
+						skip=1 
+					else
+						[ "$lang" = "en_US" ] && [ "$item_risk" = "Low" ] && skip=1 
+					fi
+					;;
+
+					"medium")
+
+					if [ "$lang" = "pt_BR" ] && [ "$item_risk" = "Medio" ]; then
+						skip=1 
+					else
+						[ "$lang" = "en_US" ] && [ "$item_risk" = "Medium" ] && skip=1 
+					fi
+					;;
+
+					"high")
+
+					if [ "$lang" = "pt_BR" ] && [ "$item_risk" = "Alto" ]; then
+						skip=1 
+					else
+						[ "$lang" = "en_US" ] && [ "$item_risk" = "High" ] && skip=0 
+					fi
+					;;
+
+					"critical")
+
+					if [ "$lang" = "pt_BR" ] && [ "$item_risk" = "Critico" ]; then
+						skip=1 
+					else
+						[ "$lang" = "en_US" ] && [ "$item_risk" = "Critical" ] && skip=1 
+					fi
+					;;
+				esac
+
+				[ $skip -eq 1 ] && break
+			done
+
+			[ $skip -eq 0 ] && {
+				echo "Not applied by user's choice (risk level filter)." >> "$LOGF"
+				continue
+			}
+
+		}
+  
+		# loading item description
+		eval item_desc=$`echo NAME_${code}`
+
+		# check if description is available
+		[ -n "$item_desc" ] || {
+     	
+			continue
+		}
+
+		# ignoring items that must be ignored at all
+		BASE_IGNORED=`echo "$BASE_IGNORED $BASE_PENDING_FOR_DISCUSSION" | tr " " "\n" | sort -u`
+		for ignored in ${BASE_IGNORED}; do
+
+			[ "${SUBCODE[$id]}" = "$ignored" ] && {
+
+				[ $verbosity ] && {
+
+					echo
+					echo "Must be ignored according to Baseline." >> "$LOGF"
+					echo "[+] Item ${SUBCODE[$id]} - \"${item_desc}\" must be ignored according to Baseline"
+					echo
+				}
+
+				continue 2
+			}
+		done
+
+		# skipping items that must be applied manually
+		for manual_item in ${BASE_MANUAL_ITEMS}; do
+
+			[ "${SUBCODE[$id]}" = "$manual_item" ] && {
+
+				[ $verbosity ] && {
+
+					echo
+					echo "Must be applied manually according to Baseline." >> "$LOGF"
+					echo "[+] Item ${SUBCODE[$id]} - \"${item_desc}\" must be applied manually according to Baseline"
+					echo
+				}
+
+				continue 2
+			}
+		done
+
+		# check if non-interactive
+		apply_choice=0
+		[ "$interactive" = "no" ] || {
+
+			yn "[*] Baseline item: ${item_desc}. Apply?" 
+			apply_choice=$?
+		}
+  
+		[ "$iteractive" = "no" ] || [ $apply_choice -eq 1 ] && {
+
+			echo "Not applied by user's choice." >> "$LOGF"
+			continue
+		}
+
+		echo "[+] Baseline item $code: ${item_desc}"
+  
+		cmd="apply_$id"
+		eval $cmd 2>> "$LOGF"
+		RET=$?
+  
+		CORRECTION_PERFORMED=0
+
+		echo_n "    Status: "
+		case $RET in
+
+			$CODE_NDD_ERROR)
+      
+				message="FAILURE: There is no such $MISSING_NDD_PARAM parameter on ndd tool."
+      				echo $message
+      				echo $message >> "$LOGF"
+      				echo $message >> "$LOGE"
+      			;;
+
+			$CODE_OK)
+
+				echo "FIXED"
+      				echo "FIXED" >> "$LOGF"
+      			;;
+
+      			$CODE_ERROR)
+
+				echo "Error executing command inside apply_$id() subroutine" >> "$LOGF"
+      				echo "Error executing command inside apply_$id() subroutine" >> "$LOGE"
+				echo "Error executing command inside apply_$id() subroutine"
+				echo "Check log file $LOGF"
+				echo
+			;;
+
+			$CODE_CONFORMITY)
+
+				echo "Already in accordance with baseline"
+				echo "Already in accordance with baseline" >> "$LOGF"
+			;;
+
+			$CODE_KERNEL)
+
+				echo "FAILURE: Can not be applied. Kernel does not support this item."
+				echo "FAILURE: Can not be applied. Kernel does not support this item." >> "$LOGF"
+				echo "FAILURE: Can not be applied. Kernel does not support this item." >> "$LOGE"
+			;;
+
+			24)
+
+				echo "FAILURE: Can not determine the Unix Flavor. Skipping..."
+				echo "FAILURE: Can not determine the Unix Flavor. Skipping..." >> "$LOGF"
+				echo "FAILURE: Can not determine the Unix Flavor. Skipping..." >> "$LOGE"
+			;;
+
+			$CODE_SUNOS_SMALLZONE)
+
+				echo "FAILURE: Can't be applied on Solaris Smallzone."
+				echo "FAILURE: Can't be applied on Solaris Smallzone." >> "$LOGF"
+				echo "FAILURE: Can't be applied on Solaris Smallzone." >> "$LOGE"
+			;;
+
+			$CODE_FAILURE)
+
+				echo "FAILURE: Can't be applied."
+				echo "FAILURE: Can't be applied." >> "$LOGF"
+				echo "FAILURE: Can't be applied." >> "$LOGE"
+			;;
+
+			$CODE_MISSED_VAR)
+
+				echo "FAILURE: $MISSED_VAR variable is missed" >> "$LOGF"
+				echo "FAILURE: $MISSED_VAR variable is missed" >> "$LOGE"
+				echo "FAILURE: $MISSED_VAR variable is missed"
+				echo
+			;;
+
+			$CODE_MISSED_FILE)
+
+				echo "FAILURE: Target $MISSED_FILE is missed."
+				echo "FAILURE: Target $MISSED_FILE is missed." >> "$LOGF"
+				echo "FAILURE: Target $MISSED_FILE is missed." >> "$LOGE"
+				echo
+			;;
+
+			127)
+
+				echo "Routine apply_$id() is not available" >> "$LOGF"
+				echo "Routine apply_$id() is not available" >> "$LOGE"
+				echo "Routine apply_$id() is not available"
+				echo "Check log file $LOGF"
+				echo
+			;;
+
+			*)
+
+				echo "Unknown status returned" >> "$LOGF"
+				echo "Unknown status returned" >> "$LOGE"
+				echo "Unknown status returned"    
+				echo "Check log file $LOGF"
+			;;
+		esac
+		echo
+	done
+}
+
+
+show_manual_items() {
+
+	local file="$1"
+	local nums=`sed -n 's/^NAME_\([0-9]\{1,\}\)=.*$/\1/p' $file`
+	local id
+	local ids
+	local num
+	local code
+	local found
+	local manual=""
+
+	ids=""
+	for id in ${BASE_IDS}; do
+
+		ids="$ids ${SUBCODE[$id]}"
+	done
+
+	SORT_PATH=`which sort`
+	if [ -n "$SORT_PATH" ]; then
+
+		ids=`echo $ids | tr " " "\n" | sort`
+	else
+
+		ids=`echo $ids | tr " " "\n"`
+		ids=`numeric_sort "$ids"`
+	fi
+
+	for num in ${nums}; do
+
+		found=0
+		for id in ${ids}; do
+
+			if [ $id -eq $num ]; then
+	
+				found=1
+				break
+			fi
+		done
+
+		if [ $found -eq 0 ]; then
+
+			manual="$manual $num"
+		fi
+	done
+
+	[ -n "$BASE_MANUAL_ITEMS" ] && {
+
+		manual="$manual $BASE_MANUAL_ITEMS"
+		manual=`echo $manual | tr " " "\n"`
+		manual=`numeric_sort "$manual"`
+	}
+
+	echo
+	echo "These items should be applied manually: "
+	echo
+
+	for id in ${manual}; do
+
+		eval item_desc=$`echo NAME_${id}`
+		[ -n "$item_desc" ] && {
+
+			echo "  [-] ${item_desc}"
+		}
+	done
+	echo
+
+	############
+	#only wait for user's interaction in case the tool is working
+	#in interactive mode on
+	#############################################################
+	[ -n "$interactive" ] && [ "$interactive" = "yes" ] && {
+
+		echo "Press <Enter> to continue"
+		read
+	}
+	#############################################################
+}
+
+# echo w/o \n trick
+if [ "X`echo -n`" = "X-n" ]; then
+  echo_n() {
+    echo ${1+"$@"}"\c"
+    return
+  }
+else
+  echo_n() {
+    echo -n ${1+"$@"}
+    return
+  }
+fi
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_invalid_PATH
+#   DESCRIPTION:  Look for invalid path on environment variable PATH.
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#        AUTHOR:  David Pinheiro, david dot pinheiro at proteus dot com dot br
+#===============================================================================
+
+fix_invalid_PATH () {
+
+  ####################################################
+  # Dexter - 27/04/2011
+  ####################################################
+  # Added some path's for root home dir
+  # TODO: Search which correct homedir for root in
+  # the /etc/passwd file
+  ####################################################
+  root_files="/root/.profile /root/.bashrc /root/.login /home/root/.profile /home/root/.bashrc /home/root/.login /.profile /.bashrc /.login"
+  target_files=""
+  backup_files=""
+  delete_files=""
+  ####################################################
+
+  for file in $root_files; do
+    [ -f "$file" ] && target_files="$target_files $file"
+  done
+
+  [ -z "$target_files" ] && return $CODE_CONFORMITY
+
+  in_accordance=0
+
+  for file in $target_files; do
+
+    filename=`basename $file`
+    tmp_file="/tmp/correction${filename}"
+
+    #Removing '.' from PATH variable definition
+    awk 'BEGIN { 
+           FS=":"
+           count=0
+           in_accordance=0
+         }
+         function join(array, start, end, sep, result, i) {
+          if (sep == "")
+            sep = " "
+          else if (sep == SUBSEP) # magic value
+            sep = ""
+          result = array[start]
+          for (i = start + 1; i <= end; i++)
+            result = result sep array[i]
+          return result
+        }
+
+        {
+          if (/PATH=/) {
+            for (i=1; i<NF+1; i++) {
+              if ($i !~ /\./) {
+                args[count++]=$i
+                in_accordance=1
+              }
+            }
+
+            print join(args,0,count,":") 
+            count=0
+          } else {
+            print
+          }
+        }
+
+        END {
+          if ( in_accordance == 1 ) {
+            exit 56
+          } else {
+            exit 22
+          }
+        }' $file > $tmp_file 2>> "$LOGE"
+
+      [ $? -eq 56 ] && {
+        in_accordance=1
+        backup_files="${backup_files} $file"
+      }
+
+      delete_files="${delete_files} $tmp_file"
+  done
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile "$backup_files" data
+
+  for file in $backup_files; do
+    filename=`basename $file`
+    tmp_file=/tmp/correction${filename}
+
+    cat $tmp_file > $file 2>> "$LOGE"
+  done
+
+  rm $delete_files 2>> "$LOGE"
+
+  return $CODE_OK 
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME: compare_versions
+#   DESCRIPTION: Compare two versions (format: X.X) and return success if 
+#    version1 >= version2 
+#    PARAMETERS: $1 = version1; $2 = version2
+#       RETURNS: 70 = version1 < version2 ; 
+#                71 = version1 = version2 ; 
+#                72 = version1 > version2 ;
+#         1  = can't compare
+#===============================================================================
+
+compare_versions() {
+
+  local version1=$1
+  local version2=$2
+
+  [ "$version1" = "$version2" ] && return 71
+
+  #i.e.: 4.0 < 5.0
+  [ ${version1%.*} -lt ${version2%.*} ] && return 70 
+
+    #i.e.: 3.5 < 3.7
+  [ ${version1%.*} -eq ${version2%.*} ] && [ ${version1#*.} -lt ${version2#*.}  ] && return 70 
+
+  #i.e.: 7.0 > 6.0
+  [ ${version1%.*} -gt ${version2%.*} ] && return 72 
+
+    #i.e.: 7.2 > 7.1
+  [ ${version1%.*} -eq ${version2%.*} ] && [ ${version1#*.} -gt ${version2#*.} ] && return 72
+
+  return 1
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_dns_spoofing
+#   DESCRIPTION:  
+#    PARAMETERS:  --
+#===============================================================================
+
+fix_dns_spoofing () {
+
+  file="/etc/resolv.conf"
+
+  [ -z "$BASE_DNS" ] && {
+    MISSED_VAR="BASE_DNS"
+    return $CODE_MISSED_VAR
+  }
+
+  [ -f "$file" ] || {
+    MISSED_FILE="$file"
+    return $CODE_MISSED_FILE
+  }
+
+  in_accordance=0
+  for dns in $BASE_DNS; do
+    grep "$dns" $file > /dev/null 2>> "$LOGE" || {
+      in_accordance=1
+      break
+    }
+  done
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile $file data
+  printf "$BASE_DNS" > $file 2>> "$LOGE"
+  
+  return  $CODE_OK
+
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_invalid_user_shell
+#   DESCRIPTION:  Remove the shell from built-in users.
+#    PARAMETERS:  -- 
+#       RETURNS:  0 = success ; 77 = baseline value not defined
+#===============================================================================
+
+fix_invalid_user_shell () {
+
+  [ -z "$BASE_SYSUSERS" ] && {
+
+    MISSED_VAR="BASE_SYSUSERS"
+    return "$CODE_MISSED_VAR"
+  }
+
+  file="/etc/passwd"
+
+  in_accordance=0
+  for user in ${BASE_SYSUSERS}; do
+    shell=`grep "^$user" "$file" | awk -F: '{ print $7 }' 2>> "$LOGE"`
+    [ -n "$shell" ] && [ "$shell" = "/bin/false" ] || in_accordance=1 
+  done
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+  backupFile $file data
+
+  tmp_file=`mktemp /tmp/correction.XXXXXX 2>> "$LOGE"`
+
+  no_shell_users=`echo $BASE_SYSUSERS | tr " " "|" 2>> "$LOGE"`
+  awk -F: '{
+           if ($1 ~ /'$no_shell_users'/)
+              printf "%s:%s:%s:%s:%s:%s:/bin/false\n",$1,$2,$3,$4,$5,$6
+           else
+              print
+
+         }' $file > $tmp_file 2>> "$LOGE"
+
+# NOT WORK IN Sun10
+  sed "s/^\(\($no_shell_users\):.*:.*:.*:.*:.*:\).*/\1\/bin\/false/" $file > $tmp_file 2>> "$LOGE"
+
+  cat $tmp_file > $file 2>> "$LOGE"
+
+  rm $tmp_file 2>> "$LOGE"
+
+  return 0
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_irrestrict_su_umask
+#   DESCRIPTION:  Set a non restrictive umask on shell initializing scripts
+#                 using a security session (CD/lib/security_session)
+#    PARAMETERS:  $1 = list of scripts (string, white space separated)
+#    		  $2 = code to be added on secutiry session
+#    		  $3 = regex. If the script find regex on file, it will add $2
+#    		  on security session.
+#       RETURNS:  0 = success ; 1 = failure ; 77 = not defined on baseline
+#===============================================================================
+
+fix_irrestrict_su_umask () {
+
+  files=$1
+  directive=$2
+  regex=$3
+  backup_files=""
+
+  [ $# -lt 3 ] && return $CODE_ERROR 
+
+  for file in $files; do
+
+    #[ ! -f "$file" ] && touch $file
+
+    #found in lib/security_session
+    security_session_add_directive_test "$file" "$regex"
+
+    if [ $? -eq 81 ]; then
+
+      backup_files="${backup_files} $file"
+
+    fi
+
+  done
+
+  [ -z "$backup_files" ] && return $CODE_CONFORMITY
+
+  backupFile "$backup_files" data
+
+  for file in $backup_files; do
+
+    security_session_add_directive "$directive" "$file" "$regex"
+
+  done
+
+  return $CODE_OK 
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  numeric_sort 
+#   DESCRIPTION:  Sort a list of numbers (integers) 
+#    PARAMETERS:  $1 = list numbers (string, white space separated)
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+numeric_sort () {
+
+  [ $# -lt 1 ] && return 1
+
+  numbers=$1
+  ordered=`echo $numbers | sed -n 's/^\([0-9]\{1,\}\).*/\1/p'`
+  numbers=`echo $numbers | sed -n 's/^[0-9]\{1,\} \(.*\)/\1/p'`
+
+  for n in $numbers; do
+    for o in $ordered; do
+
+      [ $n -lt $o ] || [ $n -eq $o ] && {
+        ordered=`echo $ordered | sed -n "s/\([0-9 ]\{0,\}\)\(${o}[0-9 ]\{0,\}\)/\1${n} \2/p"`
+        break
+      }
+
+      last_element=`echo $ordered | sed -n "/${o}$/p"`
+      [ -n "$last_element" ] && {
+        ordered="$ordered $n"
+        break
+      }
+
+    done
+  done
+
+  echo "$ordered"
+
+  return 0
+
+}
+
+set_sysctl_manually () {
+
+  echo
+  echo "  To apply this item, a dynamic parameter of the kernel must be configured"
+  echo "  now and reconfigured after each boot."
+  echo "  To implement it, this application will create a file with the necessary"
+  echo "  commands, and then, make it to be executed on the machine boot."
+  echo
+
+  rc_file=""
+  suggestion="/etc/init.d"
+
+  [ -d "/etc/rc.d" ] && suggestion = "/etc/rc.d"
+
+  while [ ! -d "$rc_file" ]; do
+
+    printf "  Choose the script diretory [${suggestion}]: "
+    read rc_file
+
+    if [ -z "$rc_file" ]; then
+      rc_file="$suggestion"
+    else
+      rc_file="$rc_file"
+    fi
+
+  done
+
+  rc_file="$rc_file/rc_security"
+
+  printf "  Do you want to create a symbolic link inside rc${runlevel}.d directory? (y/n)[n] "
+  read answer
+
+  [[ "$answer" = [sSyY] ]] && {
+
+    suggestion="none"
+    symlink=""
+
+    [ -d "/etc/rc.d/rc${runlevel}.d" ] && suggestion="/etc/rc.d/rc${runlevel}.d"
+    [ -d "/etc/init.d/rc${runlevel}.d" ] && suggestion="/etc/init.d/rc${runlevel}.d"
+    [ -d "/etc/rc${runlevel}.d" ] && suggestion="/etc/rc${runlevel}.d"
+
+    while [ ! -d "$symlink" ]; do
+
+      printf "  Type the absolute path for rc${runlevel}.d directory [$suggestion]: "
+      read symlink
+
+      if [ -z "$symlink" ]; then
+        symlink="$suggestion"
+      else
+        symlink="$symlink"
+      fi
+
+    done
+
+    symlink="$symlink/S99rc_security"
+
+  }
+
+  [ -z "$symlink" ] && {
+
+    suggestion="/etc/rc.d/rc.local" 
+
+    echo "  You'll need to configure the script to execute, on boot, via another init script."
+    while [ ! -f "$add_rc_file" ]; do 
+	 
+      printf "Please, inform the init script [$suggestion]: "
+      read add_rc_file 
+
+      [ -z "$add_rc_file" ] && add_rc_file="$suggestion"
+
+    done
+
+  }
+
+  return 0
+
+}
+
+setSysctl() {
+
+	[ $# -lt 2 ] && return $CODE_ERROR
+
+  var=$1
+  value=$2
+  file=/etc/sysctl.conf
+  sysctl_path=`which sysctl 2> /dev/null`
+  backup_done="0"
+
+  if [ -n "$sysctl_path" ]; then
+
+    ###########################################
+    # only for net.ipv4.conf.all.accept_redirects
+    # #########################################
+
+    [ "$var" = "net.ipv4.conf.all.accept_redirects" ] && {
+
+    	test_accept_redirects_order=`$sysctl_path -e -p | egrep "^[ \t]*(net\.ipv4\.conf\.all\.forwarding|net\.ipv4\.conf\.all\.accept_redirects)" | sed -n "1p" | awk '{ print $1 }'"`
+
+    	[ -n "$test_accept_redirects_order" ] && [ "$test_accept_redirects_order" = "net.ipv4.conf.all.accept_redirects" ] && {
+
+    		backupFile $file data "$sysctl_path -w $var=$old_val" && backup_done="1"
+    		accept_redirects_tempfile=`mktemp /tmp/XXXXXXXXXXXXXXXXXX`
+
+		accept_redirects_current_value=`$sysctl_path -e net.ipv4.conf.all.accept_redirects | awk '{ print $3 }'`
+		sed "s/^[ \t]\{0,\}net\.ipv4\.conf\.all\.accept_redirects[ \t]\{0,\}=/## &/" "$file" > "$accept_redirects_tempfile"
+		echo "net.ipv4.conf.all.accept_redirects = $accept_redirects_current_value" >> "$accept_redirects_tempfile"
+		cat "$accept_redirects_tempfile" > "$file"
+		rm -f "$accept_redirects_tempfile"
+
+    	}
+
+    }
+    ###########################################
+
+    old_val=`$sysctl_path -e $var | awk ' { print $3 } ' 2>> "$LOGF"`
+
+    if [ "$old_val" = "$value" ]; then
+
+      return $CODE_CONFORMITY 
+    fi
+   
+    [ "$backup_done" = "0" ] && {
+
+	    backupFile $file data "$sysctl_path -w $var=$old_val"
+    }
+
+    teste="^[[:blank:]]*$var[[:blank:]]*="
+    param="$var=$value"
+    
+    setLine $file "$teste" "$param" || {
+			echo "Could not modify $file to add the kernel parameter, skipping..." >> "$LOGF"
+			return $CODE_ERROR
+		}
+
+    eval sysctl -w "$param" >> "$LOGF"
+
+  else
+
+    # The $var tell us which file need to be modified to 
+    # change the kernel parameter. All this files are under
+    # the '/proc/sys' directory, so:
+    #
+    # net.ipv4.tcp_syncookies means /proc/sys/net/ipv4/tcp_syncookies
+
+    base_dir="/proc/sys"
+    relative_path=`echo "$var" | tr "." "\/" 2>> "$LOGF"`
+    file_path="${base_dir}/${relative_path}"
+
+    [ ! -f "$file_path" ] && return $CODE_KERNEL
+
+    old_val=`cat $file_path 2>> "$LOGF"`
+
+    [ "$old_val" = "$value" ] && return $CODE_CONFORMITY 
+
+    #Setting the value
+    printf "$value" > $file_path
+
+    #Logging
+    echo "${var} = ${value}" >> "$LOGF"
+
+    #Initializing script to change kernel parameters on boot.
+
+    runlevel=`sed -n 's/^id:\([0-9]\{1,\}\):initdefault:/\1/p' /etc/inittab 2>> "$LOGF"`
+
+    linux_distro="$LINUX_DISTRO_TOKEN" 
+
+    if [ "$interactive" = "yes" ] && [ -z "$linux_distro" ]; then
+			while [[ "$linux_distro" != [1-5] ]]; do
+				echo "  Linux Distro not detected. Please inform your distro:"
+				echo "  1)  Debian"
+				echo "  2)  Suse"
+				echo "  3)  Fedora or RedHat"
+				echo "  4)  Slackware"
+				echo "  5) Manually" 
+				printf "  Choose a number:"
+				read linux_distro
+			done
+    else
+			return $CODE_ERROR
+		fi
+
+    case $linux_distro in
+
+      1 | 'debian')
+
+				rc_file="/etc/init.d/rc_security"
+				symlink="/etc/rc${runlevel}.d/S99rc_security"
+				;;
+
+      2 | 'suse')
+
+				rc_file="/etc/init.d/rc_security"
+				symlink="/etc/init.d/rc${runlevel}.d/S99rc_security"
+				;;
+
+      3 | 'fedora'|'redhat')
+
+				rc_file="/etc/rc.d/rc_security"
+				symlink="/etc/rc.d/rc${runlevel}.d/S99rc_security"
+				;;
+
+      4 | 'slackware')
+
+				rc_file="/etc/rc.d/rc_security"
+				add_rc_file="/etc/rc.d/rc.local"
+				;;
+
+      5)
+
+				if [ "$interactive" = "yes" ]; then
+					set_sysctl_manually
+				else
+					return 24
+				fi
+				;;
+
+      *)
+
+				#OS not supported
+				return 24 
+				;;
+
+    esac
+
+    [ ! -f "$rc_file" ] && {
+      touch $rc_file      2>> "$LOGF"
+      chown root $rc_file 2>> "$LOGF"
+      chmod 700 $rc_file  2>> "$LOGF"
+      echo "#!/bin/sh" > $rc_file 2>> "$LOGF"
+
+      [ -n "$symlink" ] && ln -sf ${rc_file} ${symlink} 2>> "$LOGF"
+
+      [ -n "$add_rc_file" ] && { 
+				echo "$rc_file" >> $add_rc_file 2>> "$LOGF"
+				chmod +x $add_rc_file  2>> "$LOGF"
+      }
+    }
+
+    has_kern_param=`grep "$file_path" $rc_file`
+
+    if [ -z "$has_kern_param" ]; then
+
+      echo "echo $value > $file_path" >> $rc_file 2>> "$LOGF"
+
+    else
+
+      tmp_file=`mktemp /tmp/correction.XXXXXX 2>> "$LOGF"`
+
+      sed "s:^\(echo[ \t]\{0,\}\)[0-1]\([ \t]\{0,\}>[ \t]\{0,\}${file_path}\):\1${value}\2:" $rc_file > $tmp_file 2>> "$LOGF"
+
+      cat $tmp_file > $rc_file 2>> "$LOGF"
+
+			rm $tmp_file
+
+    fi
+
+    escaped_filepath=`echo $file_path | sed 's/\//\\\//g' 2>> "$LOGF"`
+
+    #Rollback:
+    #Setting the oldvalue to kernel parameters.
+    #Removing the setting kernel parameter command from rc_file
+    #and checking if rc_file is empty.
+
+    backup_cmd="echo $old_val > $file_path; tmp_file=\`mktemp /tmp/correction.xxxxxx\`; sed '/${escaped_filepath}/d' $rc_file > \$tmp_file; mv \$tmp_file $rc_file; chmod 700 $rc_file; lines=\`wc -l $rc_file | cut -d' ' -f1\`; "
+
+
+    [ -n "$symlink" ] && {
+
+      #Rollback:
+      #If the rc_file is empty, delete the rc_file and the symbolic link.
+
+      backup_cmd="$backup_cmd [ \$lines -eq 1 ] && { rm $rc_file; rm $symlink; }"
+
+    } 
+
+    [ -n "$add_rc_file" ] && {
+
+      escaped_rc_file=`echo $rc_file | sed 's/\//\\\//g'`
+
+      #Rollback:
+      #If the rc_file is empty, delete it and remove the rc_file reference from add_rc_file.
+
+      backup_cmd="$backup_cmd [ \$lines -eq 1 ] && { rm $rc_file; tmp_file=\`mktemp /tmp/correction.xxxxxx\`; sed '/${escaped_rc_file}/d' $add_rc_file > \$tmp_file; mv \$tmp_file $rc_file; chmod 700 $rc_file; }"
+
+    } 
+
+    backupFile $file data "$backup_cmd"
+
+  fi
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  get_home_directories 
+#   DESCRIPTION:  Retrieves all home directories from /etc/passwd. 
+#    PARAMETERS:  $1 = sort absolute path (optional) 
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+get_home_directories() {
+
+  sort_path="$1"
+
+  if [ -n "$sort_path" ]; then
+
+    home_dir_list=`grep -v "^#" /etc/passwd | cut -d: -f6 | sort -u 2>> "$LOGF"`
+
+  else
+
+    home_dir_list=`grep -v "^#" /etc/passwd | cut -d: -f6 2>> "$LOGF"`
+    home_dir_list=`remove_dup "$home_dir_list" 2>> "$LOGF"`
+
+  fi
+
+  echo "$home_dir_list"
+
+  return $CODE_OK 
+
+}
+
+
+change_interactive_restore () {
+
+  if [ "$interactiveRestore" = "yes" ]; then
+    interactiveRestore="no"
+  else
+    interactiveRestore="yes"
+  fi
+
+}
+
+show_items_to_be_restored () {
+
+  [ -z "$sessionDir" ] && {
+    echo ""
+    echo "  You must choose a session first "
+    echo ""
+    return 1
+  }
+
+  if [ -n "$1" ]; then
+    _session="$backupDirectory/$sessionDir/$1"
+  else
+    _session="$backupDirectory/$sessionDir"
+  fi
+
+  echo ""
+  echo "  The following items will be restores on this session:"
+  echo ""
+  for file in $_session/*; do
+    id=${file##*/}
+    expr "$id" : '[0-9]\{1,4\}' > /dev/null 2>&1 || continue
+
+    idlen=${#id}
+    pad=`expr 4 - $idlen`
+
+    while [ $pad -gt 0 ]; do
+      echo_n " "
+      pad=`expr $pad - 1`
+    done
+
+    if [ -f "$_session/$id/name" ]; then
+      desc=`cat "$_session/$id/name"`
+    else
+      desc="No description available"
+    fi
+
+    echo "$id => ${desc}"
+  done
+
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  install_fix_audit_script 
+#   DESCRIPTION:  - 
+#    PARAMETERS:  -
+#       RETURNS:  -
+#===============================================================================
+install_fix_audit_script () {
+  has_crontab=`which crontab 2>> $LOGF`
+  fix_tool_path="$SECURITY_DIR/fix_audit_files.sh"
+  cmd="00 00,04,08,12,16,20 * * * $fix_tool_path"
+
+  if [ -n "$has_crontab" ]; then
+
+    # Checking if the script is installed on crontab already.
+    crontab -l | grep -q "$fix_tool_path" && return 0
+
+    cp $TOOLS_PATH/fix_audit_files.sh $SECURITY_DIR 2>> $LOGF && chmod 700 $SECURITY_DIR/fix_audit_files.sh && chown root $SECURITY_DIR/fix_audit_files.sh && {
+      crontab -l > /tmp/.psCron947215 2>> $LOGF 
+      [ -f /tmp/.psCron947215 ] && {
+        echo "$cmd" >> /tmp/.psCron947215 
+        crontab /tmp/.psCron947215 2>> $LOGF 
+        rm -f /tmp/.psCron947215 2>> $LOGF
+      }
+    }
+  else
+    echo "There is no crontab on PATH. Impossible do install script." >> $LOGF
+  fi 
+
+  return 0
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  expand_user_basevar
+#   DESCRIPTION:  Creates a new list os values containing expanded values that 
+#                 matches with existing users (on passwd).
+#                 There is only one wildcard supported, %, respresenting zero 
+#                 or more printable caracters.
+#                 Example:
+#                   passwd users: adm1, adm2, sysadmin, normaluser
+#                   baseline values: "adm*, sysadmin"
+#                   return of expand_user_basevar: "adm1 adm2 sysadmin"
+#    PARAMETERS:  $1 list of values with or without wildcard
+#       RETURNS: 
+#===============================================================================
+expand_user_basevar () {
+
+  [ $# -ne 1 ] && return 1
+
+  basevar=$1
+  user_source="/etc/passwd"
+  expanded_basevar=""
+
+  for user in $basevar; do
+
+    [ -z "$user" ] && continue
+
+    # checking if the baseline value contains only wildcards.
+    # if so, ignore it.
+    wildcard_only=`echo "$user" | sed -n "/^%\{1,\}$/p"`
+    [ -n "$wildcard_only" ] && continue
+
+    # if the value does not contains wildcards, the
+    # wildcard expansion is not necessary.
+    echo "$user" | grep -q "%" || {
+      if [ -z "$expanded_basevar" ]; then
+         expanded_basevar=$user
+      else
+         expanded_basevar="$expanded_basevar
+$user"
+      fi
+      continue
+    }
+
+    # replacing wildcard for a complain sed regex
+    regex=`echo "$user" | sed 's/%/\.\\\\{0,\\\\}/g'`
+
+    # applying the expanded value to users list.
+    users_found=`cat $user_source | awk -F: '{ print $1 '} | sed -n "/^${regex}/p"`
+    [ -n "$users_found" ] && {
+      if [ -z "$expanded_basevar" ]; then
+         expanded_basevar=$users_found
+      else
+         expanded_basevar="$expanded_basevar
+$users_found"
+      fi
+    }
+
+  done
+
+  [ -n "$expanded_basevar" ] && printf "$expanded_basevar\n"
+
+  return 0
+
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  user_exists
+#   DESCRIPTION:  Return the list of users that exist on system
+#    PARAMETERS:  $1 = List (comma or newline separated) of users 
+#       RETURNS:  -
+#===============================================================================
+user_exists () {
+  
+  [ $# -ne 1 ] && return 1
+
+  users=`expand_user_basevar "$1"`
+
+  for user in $users; do
+    user_exists=`cat /etc/passwd | sed -n "/^${user}:/p"`
+
+    [ -z "$user_exists" ] && continue
+
+    if [ -z "$base_users" ]; then
+      base_users="$user"
+    else
+      base_users="$user
+$base_users"
+    fi
+  done
+
+  printf "$base_users\n"
+  return 0
+
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_cron
+#   DESCRIPTION:  - 
+#    PARAMETERS:  $1 = absolute cron.allow path 
+#       RETURNS:  -
+#===============================================================================
+fix_cron () {
+
+        [ -z "$BASE_CRON_ALLOW" ] && return ${CODE_CONFORMITY}
+
+        local file="/etc/cron.allow"
+        local valid_users=`awk -F: '{ print $1 }' /etc/passwd | sort -u`
+        local base_users=`echo $BASE_CRON_ALLOW | tr " " "\n" | sort -u`
+
+        if [ ! -f "$file" ]; then
+
+                for user in ${base_users}; do
+
+                        local result=`echo "$valid_users" | tr " " "\n" | egrep "^[ \t]*$user[ \t]*$"`
+                        [ -n "$result" ] && {
+
+                                local apply_users=`echo $apply_users $user`
+                        }
+                done
+
+		backupFile "" "perm" "rm $file"
+                echo "$apply_users" | tr " " "\n" > $file
+		return ${CODE_OK}
+        else
+
+                for user in ${base_users}; do
+
+                        local result=`echo "$valid_users" | tr " " "\n" | egrep "^[ \t]*$user[ \t]*$"`
+                        [ -n "$result" ] && {
+
+                                local apply_users_temp=`echo $apply_users_temp $user`
+                        }
+                done
+                local apply_users_temp=`echo $apply_users_temp | tr " " "\n"`
+                local cron_users_in_file=`cat $file | sort -u`
+
+                local apply_users_temp_count=`echo $apply_users_temp | tr " " "\n" | wc -l`
+                local cron_users_in_file_count=`echo $cron_users_in_file | tr " " "\n" | wc -l`
+
+                if [ -n "$apply_users_temp_count" -a -n "$cron_users_in_file_count" ]; then
+
+                        if [ "$apply_users_temp_count" != "$cron_users_in_file_count" ]; then
+
+                                local must_be_fixed="1"
+                        else
+
+                                local seq_count="1"
+                                local max_count="$apply_users_temp_count"
+
+                                while [[ "$seq_count" -le "$max_count" ]]; do
+
+                                        local user_temp1=`echo $apply_users_temp | tr " " "\n" | sed -n "$seq_count p"`
+                                        local user_temp2=`echo $cron_users_in_file | tr " " "\n" | sed -n "$seq_count p"`
+
+                                        [ "$user_temp1" != "$user_temp2" ] && {
+
+                                                local must_be_fixed="1"
+                                                break
+                                        }
+                                        local seq_count=`expr "$seq_count" \+ 1`
+                                done
+                        fi
+                else
+
+                        local seq_count="1"
+                        local max_count="$apply_users_temp_count"
+
+                        while [[ "$seq_count" -le "$max_count" ]]; do
+
+                                local user_temp1=`echo $apply_users_temp | tr " " "\n" | sed -n "$seq_count p"`
+                                local user_temp2=`echo $cron_users_in_file | tr " " "\n" | sed -n "$seq_count p"`
+
+                                [ "$user_temp1" != "$user_temp2" ] && {
+
+                                        local must_be_fixed="1"
+                                        break
+                                }
+                                local seq_count=`expr "$seq_count" \+ 1`
+                        done
+                fi
+
+                [ "$must_be_fixed" == "1" ] && {
+
+                        backupFile "$file" "data"
+                        echo "$apply_users_temp" | tr " " "\n" > $file
+                        return ${CODE_OK}
+                }
+
+                return ${CODE_CONFORMITY}
+        fi
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_at
+#   DESCRIPTION:  - 
+#    PARAMETERS:  $1 = absolute at.allow path 
+#       RETURNS:  -
+#===============================================================================
+fix_at () {
+
+        [ -z "$BASE_AT_ALLOW" ] && return ${CODE_CONFORMITY}
+
+        local file="/etc/at.allow"
+        local valid_users=`awk -F: '{ print $1 }' /etc/passwd | sort -u`
+        local base_users=`echo $BASE_AT_ALLOW | tr " " "\n" | sort -u`
+
+        if [ ! -f "$file" ]; then
+
+                for user in ${base_users}; do
+
+                        local result=`echo "$valid_users" | tr " " "\n" | egrep "^[ \t]*$user[ \t]*$"`
+                        [ -n "$result" ] && {
+
+                                local apply_users=`echo $apply_users $user`
+                        }
+                done
+
+                backupFile "" "perm" "rm $file"
+                echo "$apply_users" | tr " " "\n" > $file
+		return ${CODE_OK}
+        else
+
+                for user in ${base_users}; do
+
+                        local result=`echo "$valid_users" | tr " " "\n" | egrep "^[ \t]*$user[ \t]*$"`
+                        [ -n "$result" ] && {
+
+                                local apply_users_temp=`echo $apply_users_temp $user`
+                        }
+                done
+
+                local apply_users_temp=`echo $apply_users_temp | tr " " "\n"`
+                local at_users_in_file=`cat $file | sort -u`
+
+                local apply_users_temp_count=`echo $apply_users_temp | tr " " "\n" | wc -l`
+                local at_users_in_file_count=`echo $at_users_in_file | tr " " "\n" | wc -l` 
+
+                if [ -n "$apply_users_temp_count" -a -n "$at_users_in_file_count" ]; then
+
+                        if [ "$apply_users_temp_count" != "$at_users_in_file_count" ]; then
+
+                                local must_be_fixed="1"
+                        else
+                                local seq_count="1"
+                                local max_count="$apply_users_temp_count"
+
+                                while [[ "$seq_count" -le "$max_count" ]]; do
+
+                                        local user_temp1=`echo $apply_users_temp | tr " " "\n" | sed -n "$seq_count p"`
+                                        local user_temp2=`echo $at_users_in_file | tr " " "\n" | sed -n "$seq_count p"`
+
+                                        [ "$user_temp1" != "$user_temp2" ] && {
+
+                                                local must_be_fixed="1"
+                                                break
+                                        }
+                                        local seq_count=`expr "$seq_count" \+ 1`
+                                done
+                        fi
+                else
+
+                        local seq_count="1"
+                        local max_count="$apply_users_temp_count"
+
+			while [[ "$seq_count" -le "$max_count" ]]; do
+
+                                local user_temp1=`echo $apply_users_temp | tr " " "\n" | sed -n "$seq_count p"`
+                                local user_temp2=`echo $at_users_in_file | tr " " "\n" | sed -n "$seq_count p"`
+
+                                [ "$user_temp1" != "$user_temp2" ] && {
+
+                                        local must_be_fixed="1"
+                                        break
+                                }
+                                local seq_count=`expr "$seq_count" \+ 1`
+                        done
+                fi
+
+                [ "$must_be_fixed" == "1" ] && {
+
+                        backupFile "$file" "data"
+                        echo "$apply_users_temp" | tr " " "\n" > $file
+                        return ${CODE_OK}
+                }
+
+                return ${CODE_CONFORMITY}
+        fi
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_tmout
+#   DESCRIPTION:  - 
+#    PARAMETERS:  $1 = absolute profile path 
+#                 $2 = tmout value
+#       RETURNS:  -
+#===============================================================================
+fix_tmout() {
+
+	[ $# -ne 2 ] && return $CODE_ERROR
+
+	local file=$1
+	local base_tmout=$2
+
+	[ -n "$base_tmout" ] || {
+
+		MISSED_VAR="BASE_TMOUT"
+		return $CODE_MISSED_VAR 
+	}
+
+	[ -a "$file" ] || {
+
+		touch $file
+		cmd="rm $file"
+	}
+
+	tmout=`awk -F"=" '(match($1,/^[ \t]*(export[ \t]+)?TMOUT[ \t]*/)) { print $2 }' $file | tr -d "\"" | egrep -v "^[ \t]*$" | tail -1`
+        if [ -z "$tmout" ]; then
+
+		tmout=`awk -F"=" '(match($0,/^[ \t]*readonly[ \t]+TMOUT[ \t]*=(\")?[0-9]+(\")?[ \t]*;[ \t]*export[ \t]+TMOUT/)) { print $2 }' \
+                $file | tr -d "\"" | egrep -o "[0-9]+"`
+	fi
+
+	if  [ -z "$tmout" ]; then
+
+		tmout=`awk 'BEGIN {
+        
+                        find_tmout = 0
+                        FS = "=" 
+                }
+
+                {
+                        LINE = $0
+                        if(match(LINE,/^[ \t]*$|^[ \t]*\#/)) {
+                                next
+                }
+
+                        if (find_tmout == "0") {
+
+                                if(match(LINE,/^[ \t]*readonly[ \t]*TMOUT/)) {
+
+                                        TMOUT_VALUE=$2
+                                        next
+                                }
+                        }
+
+                        if(match(LINE,/^[ \t]*export[ \t]*TMOUT/)) {
+
+                                print TMOUT_VALUE
+                        }
+
+                }' $file | tr -d "\""`
+        fi
+
+	[ -n "$tmout" ] && [ "$tmout" -le "$base_tmout" ] && {
+
+		unset file base_tmout cmd tmout
+		return ${CODE_CONFORMITY}
+	}
+
+	backupFile "$file" "data" "$cmd"
+
+	if [ -n "$tmout" ]; then
+
+		tmp_file=`mktemp /tmp/correction.XXXXXX`
+
+		sed "/^[ \t]\{0,\}\(readonly.\{1,\}\)\{0,\}TMOUT.\{1,\}/d" "$file" > "$tmp_file"
+		cat "$tmp_file" > "$file"
+		sed "/^[ \t]\{0,\}\(export.\{1,\}\)\{0,\}TMOUT.\{0,\}$/d" "$file" > "$tmp_file"
+		cat "$tmp_file" > "$file"
+
+		echo "TMOUT=$base_tmout" >> $file
+                echo "export TMOUT" >> $file
+
+		rm "$tmp_file"
+		unset tmp_file
+	else
+
+		echo "TMOUT=$base_tmout" >> $file
+		echo "export TMOUT" >> $file
+	fi
+
+	unset file base_tmout cmd tmout tmp_file
+
+	return ${CODE_OK}
+}
+
+set_syslog_in_sudoers() {
+
+	############################
+	#checking all baseline variables before to apply this item
+	#in case at least one is missing, the function will not 
+	#perform the correction at all
+	############################
+	[ -z "$BASE_SUDOERS_SYSLOG" ] || [ -z "$BASE_SUDOERS_SYSLOG_GOODPRI" ] || [ -z "$BASE_SUDOERS_SYSLOG_BADPRI" ] && {
+
+		return "$CODE_MISSED_VAR"
+	}
+	############################
+
+	###############################################
+	# Apply sudoers file
+	###############################################
+	sudoers_file="$1"
+	###############################################
+	if [ -f "$sudoers_file" ]; then
+
+		checksudoers=`cat "$sudoers_file" | egrep -v "^[ \t]*$|^[ \t]*#" | egrep "syslog_goodpri|syslog_badpri" | sed "s/[ \t]\{0,\}//g"`
+	
+		if [ -z "$checksudoers" ]; then
+
+			backupFile "$sudoers_file" "data"
+			############################
+			#applying the item
+			echo "Defaults syslog=${BASE_SUDOERS_SYSLOG},syslog_goodpri=${BASE_SUDOERS_SYSLOG_GOODPRI},syslog_badpri=${BASE_SUDOERS_SYSLOG_BADPRI}" >> "$sudoers_file" 2>/dev/null
+			############################
+			#checkinf the return code
+			if [ "$?" -eq "0" ]; then
+
+				return "$CODE_OK"
+			else
+
+				return "$CODE_ERROR"
+			fi
+			############################
+		else
+
+			############################
+			#checking all present values before to apply this item
+			############################
+
+			sudoers_syslog=`echo "$checksudoers" | egrep -o "syslog[ \t]*=[ \t]*[a-zA-Z]+" | awk -F"=" '{ print $2 }' | sed "s/[ \t]\{0,\}//g"`
+			sudoers_syslog_goodpri=`echo "$checksudoers" | egrep -o "syslog_goodpri[ \t]*=[ \t]*[a-zA-Z]+" | awk -F"=" '{ print $2 }' | sed "s/[ \t]\{0,\}//g"`
+			sudoers_syslog_badpri=`echo "$checksudoers" | egrep -o "syslog_badpri[ \t]*=[ \t]*[a-zA-Z]+" | awk -F"=" '{ print $2 }' | sed "s/[ \t]\{0,\}//g"`
+
+			[ "$sudoers_syslog" = "${BASE_SUDOERS_SYSLOG}" ] && [ "$sudoers_syslog_goodpri" = "${BASE_SUDOERS_SYSLOG_GOODPRI}" ] && [ "$sudoers_syslog_badpri" = "${BASE_SUDOERS_SYSLOG_BADPRI}" ] && {
+
+				return "$CODE_CONFORMITY"
+			}
+			############################
+
+			backupFile "$sudoers_file" "data"
+			############################
+			#if there is some different between the values/parameters, 
+			#so the item will be corrected/applied
+			tmp_file=`mktemp /tmp/correction.XXXXXX`
+			sed -e "/.*syslog_goodpri.*/d;/.*syslog_badpri.*/d" "$sudoers_file" > "$tmp_file" 2>/dev/null
+			echo "Defaults syslog=${BASE_SUDOERS_SYSLOG},syslog_goodpri=${BASE_SUDOERS_SYSLOG_GOODPRI},syslog_badpri=${BASE_SUDOERS_SYSLOG_BADPRI}" >> "$tmp_file" 2>/dev/null
+			cat "$tmp_file" > "$sudoers_file" 2>/dev/null
+			############################
+			#checkinf the return code
+			if [ "$?" -eq "0" ]; then
+
+				return "$CODE_OK"
+			else
+
+				return "$CODE_ERROR"
+			fi
+			############################
+		fi
+	else
+
+		return "$CODE_MISSED_FILE"
+	fi
+	###############################################
+}

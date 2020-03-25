@@ -1,0 +1,141 @@
+#===  FUNCTION  ================================================================
+#          NAME:  check_dir_listing_lighttpd
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to lighttpd conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_dir_listing_lighttpd() {
+    [ $# -lt 1 ] && return 0
+    local conf_file=$1
+    if [ -f "$conf_file" ]; then         
+        dir_list_value=`awk '/\ *server.dir-listing/ { print $0 }' $conf_file | sed -e 's/\ *server.dir-listing\ *=\ *"\(.*\)"/\1/'`
+        [ "$dir_list_value" = "enable" ] && return 1
+        return 2
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  check_server_tag_lighttpd
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to lighttpd conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_server_tag_lighttpd() {
+    [ $# -lt 1 ] && return 0
+    local conf_file=$1
+    if [ -f "$conf_file" ]; then 
+        local server_tag
+        server_tag=`awk '/^\ *(S|s)erver\.tag\ *=\ *.lighttpd./ { print $0 }' $conf_file`
+        if [ -z "$server_tag" ]; then
+            return 2
+        else
+            return 1
+        fi
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  check_ssl_lighttpd
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to lighttpd conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_ssl_lighttpd() {
+    [ $# -lt 2 ] && return 0
+    local conf_file=$1
+    local pem_file=$2
+    if [ -f "$conf_file" ]; then 
+        engine_enabled=`awk '/^\ *ssl.engine\ *=\ *"?enabled"?/ { print $0 }' $conf_file`
+        [ -z "$engine_enabled" ] && return 1
+        [ -z "$pem_file" ] && return 1
+        [ -f "$pem_file" ] && return 2
+        return 1
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  check_bak_old_files_lighttpd
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to lighttpd conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_bak_old_files_lighttpd() {
+    [ $# -lt 2 ] && return 0
+    local conf_file
+    conf_file=$1
+    local list_file
+    list_file=$2
+    if [ -f "$conf_file" -a -f "$list_file" ];  then
+        local list
+        local deny_str
+        local bak
+        local old
+        list=`cat $list_file  | awk '/.*\.(bak|old)/ { print $0 }'`
+        deny_str=`awk '/\ *url\.access-deny/ { print $0 }' $conf_file`
+        bak=`echo $deny_str | sed -n 's/.*\.\(bak\).*/\1/g;/.*bak.*/p'`
+        old=`echo $deny_str | sed -n 's/.*\.\(old\).*/\1/g;/.*old.*/p'`
+        [ -z "$list" -a -z "$bak" -a -z "$old" ] && return 2
+        [ "$bak" != "bak" ] && {
+            local bak_files
+            bak_files=`echo "$list" | sed -n '/.*\.bak.*/p'`
+            [ -n "$bak_files" ] && {
+                return 1
+            }
+        }
+        [ "$old" != "old" ] && {
+            local old_files
+            old_files=`echo "$list" | sed -n '/.*\.old.*/p'`
+            [ -n "$old_files" ] && {
+                return 1
+            }
+        }
+        return 2
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  compare_lighttpd_versions
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to lighttpd conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+compare_lighttpd_versions() {
+    [ $# -lt 2 ] && return 0
+    local current_version=$1
+    local last_version=$2
+    [ $current_version = $last_version ] && return 2
+    local current_number=`echo $current_version | sed -n 's/\([0-9]\+\)\..*/\1/g;/^[0-9]\+$/p'`
+    local last_number=`echo $last_version | sed -n 's/\([0-9]\+\)\..*/\1/g;/^[0-9]\+$/p'`
+    [ -z "$current_number" -o -z "$last_number" ] && return 0
+    current_number=$((current_number))
+    last_number=$((last_number))
+    [ $current_number -lt $last_number ] && return 1
+    [ $current_number -gt $last_number ] && return 2
+    [ $current_number -eq $last_number ] && {
+        current_number=`echo $current_version | sed -n 's/[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`
+        last_number=`echo $last_version | sed -n 's/[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`
+        [ -z "$current_number" -o -z "$last_number" ] && return 0
+        current_number=$((current_number))
+        last_number=$((last_number))
+        [ $current_number -lt $last_number ] && return 1
+        [ $current_number -gt $last_number ] && return 2
+        [ $current_number -eq $last_number ] && {
+            current_number=`echo $current_version | sed -n 's/[0-9]\+\.[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`
+            last_number=`echo $last_version | sed -n 's/[0-9]\+\.[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`   
+            [ -z "$current_number" -o -z "$last_number" ] && return 0
+            current_number=$((current_number))
+            last_number=$((last_number))
+            [ $current_number -lt $last_number ] && return 1
+            [ $current_number -gt $last_number ] && return 2
+        }
+    }
+    return 2
+}

@@ -1,0 +1,236 @@
+#NAO TEM CORRECAO NAME[7000]="Executar Web Server com usuário sem privilégios"
+#NAO TEM CORRECAO NAME[7001]="Remover senha sem criptografia"
+#NAME[7002]="Permissões impróprias nos arquivos de configuração do Resin"
+#NAME[7004]="Renomear usuário admin padrão"
+#NAO TEM CORRECAO NAME[7005]="Criar um usuário responsável pelo resin: adduser resin. Em seguida, setar a permissão dos diretório para este usuário: chown resin:resin /*"
+#NAME[7006]="Permissões impróprias nos arquivos de log do Resin"
+#NAME[7007]="Restringir acesso a console Administrativa do resin só para localhost"
+#TODO Move duplicated code to common lib
+
+
+BASE_IDS="1 2 3 4"
+. "$APP_PATH/lib/common"
+
+SUBCODE[1]="7002"
+apply_1() {
+  resinConfDir="$resinHome/conf"
+  # Checking if the file exist
+  [ -d "$resinConfDir" ] || {
+      MISSED_FILE="$resinConfDir"
+      return $CODE_MISSED_FILE
+  }
+
+  [ -f "$resinPermissionsFile" ] || {
+      MISSED_FILE="$resinPermissionsFile"
+      return $CODE_MISSED_FILE
+  }
+
+  [ -z "$BASE_RESIN_SERVICE_USER" ] && {
+    echo "Impossible to fix item due to baseline variable definition (BASE_RESIN_ALLOWED_USER)."
+    return $CODE_ERROR
+  }
+  
+  local restore_cmd
+  local current_file_perm
+  old_ifs=$IFS
+  IFS=$'\n'
+  for file in `ls -l $resinConfDir`; do
+
+    printf "%s" "$file" | grep -q "^total " 2> /dev/null && continue 1
+
+    filename=`printf "%s" "$file" | awk '{ print $NF }'`
+
+    _resin_file_vuln "$file" "$BASE_RESIN_SERVICE_USER" "-r--------"
+
+    [ $? -eq 70 ] && {
+        current_file_perm=`echo $file | awk '{ print $1 }'`
+        current_file_perm=`get_numeric_perm $current_file_perm`
+        if [ -z $restore_cmd ]; then            
+            restore_cmd="chmod $current_file_perm ${resinConfDir}/${filename};"
+        else
+            restore_cmd="$restore_cmd chmod $current_file_perm ${resinConfDir}/${filename};"
+        fi
+    }
+  done
+
+  IFS=$old_ifs
+  [ -n "$restore_cmd" ] && {
+    user_exist=`cat /etc/passwd | grep "$BASE_RESIN_SERVICE_USER"`
+    [ -n "$user_exist" ] {
+        backupFile "" "perm" "$restore_cmd"
+        chown -R $BASE_RESIN_SERVICE_USER $resinConfDir
+        chmod -R go-rwx,u-w $resinConfDir
+    }
+  }
+
+  return $CODE_OK
+}
+
+SUBCODE[2]="7004"
+apply_2() {
+
+  [ -z "$BASE_RESIN_INVALID_USER" ] && {
+    echo "Impossible to fix item due to baseline variable definition (BASE_RESIN_INVALID_USER)."
+    return $CODE_ERROR
+  }
+
+  [ -z "$BASE_RESIN_VALID_USER" ] && {
+    echo "Impossible to fix item due to baseline variable definition (BASE_RESIN_VALID_USER)."
+    return $CODE_ERROR
+  }
+
+  resinConf="$resinHome/conf/resin.conf"
+
+  [ ! -f "$resinConf" ] {
+      MISSED_FILE="$resinConf"
+      return $CODE_MISSED_FILE
+  }
+
+  backupFile "$resinConf" "data"
+  sed -i "s/\(<user\ .*\)name=\"$BASE_RESIN_INVALID_USER\"\(.*\)/\1name=\"$BASE_RESIN_VALID_USER\"\2/g" $resinConf
+
+  return $CODE_OK
+}
+
+SUBCODE[3]="7006"
+apply_3() {
+  [ -z "$BASE_RESIN_SERVICE_USER" ] && {
+    echo "Impossible to fix item due to baseline variable definition (BASE_RESIN_SERVICE_USER)."
+    return $CODE_ERROR
+  }
+
+  local vuln_files=""
+  local target_perm="-rw.------"
+  local old_ifs=$IFS
+  local filename
+  local restore_cmd
+  local current_file_perm
+
+  IFS=$'\n'
+  for file in `ls -l $resinHome/log`; do
+
+    printf "%s" "$file" | grep -q "^total " 2> /dev/null && continue 1
+    filename=`printf "%s" "$file" | awk '{ print $NF }'`
+
+    _resin_file_vuln "$file" "$BASE_RESIN_SERVICE_USER" "$target_perm"
+    [ $? -eq 70 ] && {
+        current_file_perm=`echo $file | awk '{ print $1 }'`
+        current_file_perm=`get_numeric_perm $current_file_perm`
+        if [ -z $restore_cmd ]; then
+            restore_cmd="chmod $current_file_perm ${resinHome}/log/${filename};"
+        else
+            restore_cmd="$restore_cmd chmod $current_file_perm ${resinHome}/log/${filename};"
+        fi
+    }
+  done
+
+  for file in `ls -l $resinHome/logs`; do
+
+    printf "%s" "$file" | grep -q "^total " 2> /dev/null && continue 1
+    filename=`printf "%s" "$file" | awk '{ print $NF }'`
+
+    _resin_file_vuln "$file" "$BASE_RESIN_SERVICE_USER" "$target_perm"
+
+    [ $? -eq 70 ] && {
+        current_file_perm=`echo $file | awk '{ print $1 }'`
+        current_file_perm=`get_numeric_perm $current_file_perm`
+        if [ -z $restore_cmd ]; then
+            restore_cmd="chmod $current_file_perm ${resinHome}/logs/${filename};"
+        else
+            restore_cmd="$restore_cmd chmod $current_file_perm ${resinHome}/logs/${filename};"
+        fi
+    }
+  done
+
+  IFS=$old_ifs
+
+  [ -n "$restore_cmd" ] && {
+    backupFile "" "perm" "$restore_cmd"
+    user_exist=`cat /etc/passwd | grep "$BASE_RESIN_SERVICE_USER"`
+    [ -n "$user_exist" ] {
+        backupFile "" "perm" "$restore_cmd"
+        chown -R $BASE_RESIN_SERVICE_USER $resinHome/logs
+        chmod -R go-rwx $resinHome/logs
+        chown -R $BASE_RESIN_SERVICE_USER $resinHome/log
+        chmod -R go-rwx $resinHome/log
+    }
+  }
+
+  return $CODE_OK
+}
+
+SUBCODE[4]="7007"
+apply_4() {
+  resinConf="$resinHome/conf/resin.conf"
+
+  admin_external=`printf "%s\n" "$resinConf" | sed -n "/<resin:set.\{1,\}var=\"resin_admin_external\"/p" | sed -n "s/.\{1,\}value[ \t]\{0,\}=[ \t]\{0,\}\"\{0,1\}\([a-zA-Z]\{1,\}\)\"\{0,1\}.\{1,\}/\1/p" | tr '[:upper:]' '[:lower:]'`
+
+  [ -z "$admin_external" ] || [ "$admin_external" != "false" ] && {
+    backupFile "$resinConf" "data"
+    sed -i "s/\(.*\)\(var=\"resin_admin_external\"\)\(.*\)/<resin:set\ var=\"resin_admin_external\"\ value=\"true\"\/>/g" $resinConf
+  }
+  
+  return $CODE_OK
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  _resin_file_vuln
+#   DESCRIPTION:  -
+#    PARAMETERS:  -  
+#       RETURNS:  70 => vulnerable ; 71 => not vulnerable; 1 => can't analyze 
+#===============================================================================
+_resin_file_vuln() {
+
+  [ $# -lt 3 ] && return 1
+
+
+  local file=$1
+  local target_owner=$2
+  local target_perm=$3
+  local vuln_perm=0
+  local vuln_owner=0
+  local owner
+  local perm
+
+  [ -z "$file" ] || [ -z "$target_owner" ] || [ -z "$target_perm" ] && return 1
+
+  printf "%s" "$file" | grep -q "^total " 2> /dev/null && return 1
+
+  owner=`printf "%s" "$file" | awk '{ print $3 }'`
+  perm=`printf "%s" "$file" | awk '{ print $1 } '`
+
+  printf "%s" "$perm" | grep -q -- "$target_perm" 2> /dev/null && vuln_perm=1
+  [ "$target_owner" = "$owner" ] && vuln_owner=1
+
+  [ $vuln_perm -eq 0 ] || [ $vuln_owner -eq 0 ] && return 70
+
+  return 71
+}
+
+get_numeric_perm() {
+    [ $# -lt 1 ] && return 1
+    local perm=$1
+    local owner=`echo $perm | sed 's/.\(.\{3\}\).*/\1/g'`
+    local group=`echo $perm | sed 's/.\{4\}\(.\{3\}\).*/\1/g'`
+    local others=`echo $perm | sed 's/.\{7\}\(.\{3\}\).*/\1/g'`
+    owner=`transform_perm_to_octal $owner`
+    group=`transform_perm_to_octal $group`
+    others=`transform_perm_to_octal $others`
+    echo ${owner}${group}${others}
+}
+
+transform_perm_to_octal() {
+    [ $# -lt 1 ] && return 1
+    local aux_perm=$1
+    local aux_read=`echo $aux_perm | awk '/r/ { print 4 }'`
+    local aux_write=`echo $aux_perm | awk '/w/ { print 2 }'`
+    local aux_execute=`echo $aux_perm | awk '/x/ { print 1 }'`
+    local expression=""
+    [ -n "$aux_read" ] && expression="$aux_read"
+    [ -n "$aux_write" -a -n "$expression" ] && expression="$expression + $aux_write"
+    [ -n "$aux_write" -a -z "$expression" ] && expression="$aux_write"
+    [ -n "$aux_execute" -a -n "$expression" ] && expression="$expression + $aux_execute"
+    [ -n "$aux_execute" -a -z "$expression" ] && expression="$aux_execute"
+    expr $expression
+}

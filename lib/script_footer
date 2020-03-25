@@ -1,0 +1,4 @@
+echo
+echo "[*] Finished"
+
+exit 0

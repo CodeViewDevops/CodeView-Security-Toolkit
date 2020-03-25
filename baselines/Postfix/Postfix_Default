@@ -1,0 +1,17 @@
+###Please provide baseline name
+BASE_NAME="Postfix MailServer - Default"
+
+###A brief description to clarify details on this baseline is placed here
+BASE_DESCRIPTION="Add a brief description on this baseline here..."
+
+###Please provide a list for all items that must be ignored at all
+BASE_IGNORED=""
+
+###Please provide a list for all items that must be discussed (pending to be analyzed)
+BASE_PENDING_FOR_DISCUSSION=""
+
+###Please provide a list for all items that must be applied only by third party companies or vendors 
+BASE_ITEMS_WITH_DEPENDENCY=""
+
+###Please provide all domains to use this server as open relay
+BASE_POSTFIX_AUTH_HOSTS=""

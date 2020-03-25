@@ -1,0 +1,209 @@
+. "$APP_PATH/lib/Services/Apache/include.sh"
+
+BASE_IDS="1 2 3 4 5 6 8 9 10 11"
+
+SUBCODE[1]="7"
+apply_1 () {
+
+  fix_apache_exec_by_name
+  return
+
+
+}
+
+SUBCODE[2]="10"
+apply_2() {
+        local retval
+        local tmp=/tmp/tmpXXXXXXXX
+
+        check_htaccess=`egrep "^[ \t]*(<Files[ \t]+.*\"\^[\]\.ht\">|<FilesMatch[ \t]+\"\^[\]\.ht\">)" "$apacheFile"`
+        if [ -n "$check_htaccess" ]; then
+
+                awk '
+                        $0 ~ /^ *#/ {
+                                print
+                                next
+                        }
+
+                        (/<Files / && $3 ~ /"\^\\\.ht"/) || (/<FilesMatch / && $2 ~ /"\^\\\.ht"/) {
+                                i = 1;
+                                order = 0;
+                                deny  = 0;
+                                satisfy = 0;
+                                print
+                                next
+                        }
+                        ($1 == "</Files>" || $1 == "</FilesMatch>") && i == 1 {
+                                i = 0;
+                                if(order == 0)
+                                        print "    Order allow, deny"
+                                if(deny == 0)
+                                        print "    Deny from all"
+                                if(satisfy == 0)
+                                        print "    Satisfy All"
+
+                                print
+                                next
+                        }
+                        i == 1 {
+                                if(match($0, "^ *Allow  *from  *all"))
+                                        sub("Allow", "Deny");
+
+                                if(match($0, "^[ \t]*Satisfy[ \t]+[aA]ny"))
+                                        sub("[aA]ny", "All");
+                                print
+
+                                if(match($0, "^ *Order  *allow *, *deny"))
+                                        order = 1;
+
+                                if(match($0, "^ *Deny  *from  *all"))
+                                        deny = 1;
+
+                                if(match($0, "^[ \t]*Satisfy[ \t]+[aA]ll"))
+                                        satisfy = 1;
+
+                                next
+                        }
+
+                        $0 ~ /.*/ { print }
+                ' "$apacheFile" > "$tmp"
+        else
+
+                cat "$apacheFile" > "$tmp"
+                cat <<EOF >> "$tmp"
+
+<Files ~ "^\.ht">
+    Order allow,deny
+    Deny from all
+    Satisfy All
+</Files>
+EOF
+
+        fi
+
+        backupFile "$apacheFile" "data"
+
+        setContent "$apacheFile" "`cat "$tmp"`"
+        retval=$?
+
+        rm -f "$tmp"
+
+        return $retval
+}
+
+SUBCODE[3]="15"
+apply_3() {
+    backupFile "$apacheFile" "data"
+
+	setLine "$apacheFile" "^[ \t]*AddType.*\.shtml" "#"
+	return
+}
+
+SUBCODE[4]="17"
+apply_4() {
+	local content
+	content=`awk ' $1 == "UserDir" && $2 !~ /^disabled?/ {
+		$0="#" $0
+	}
+	{ print }
+	' $apacheFile`
+
+    backupFile "$apacheFile" "data"
+
+	setContent "$apacheFile" "$content"
+	return
+}
+
+SUBCODE[5]="19"
+apply_5() {
+
+    backupFile "$apacheFile" "data"
+
+	setLine "$apacheFile" "^[ \t]*#?[ \t]*ServerSignature[ \t]+" "ServerSignature off" "^[ \t]*ServerSignature[ \t]+[oO]ff"
+	return
+}
+
+SUBCODE[6]="3"
+apply_6() {
+
+    backupFile "$apacheFile" "data"
+
+	setLine "$apacheFile" "^[ \t]*#?[ \t]*ServerTokens" "ServerTokens Prod"
+	return
+}
+
+# disabled
+SUBCODE[7]="4"
+apply_7() {
+	[ -z "$BASE_USER_APACHE" ] && {
+		MISSED_VAR="BASE_USER_APACHE"
+		return 33
+	}
+
+	[ -z "$BASE_GROUP_APACHE" ] && {
+		MISSED_VAR="BASE_GROUP_APACHE"
+		return 33
+	}
+
+    backupFile "$apacheFile" "data"
+
+	setLine "$apacheFile" "^[ \t]*User " "User $BASE_USER_APACHE" "$BASE_USER_APACHE"
+	setLine "$apacheFile" "^[ \t]*Group " "Group $BASE_GROUP_APACHE" "$BASE_GROUP_APACHE"
+	return
+}
+
+SUBCODE[8]="5"
+apply_8() {
+	local content
+
+	content=`awk ' $0 !~ /^ *#/ && /Options/ { 
+		sub(" Indexes", " -Indexes", $0);
+		sub(" MultiViews", " -MultiViews", $0);
+	}
+
+	{ print }
+	' $apacheFile`
+
+    backupFile "$apacheFile" "data"
+
+	setContent "$apacheFile" "$content"
+	return
+}
+
+SUBCODE[9]="6"
+apply_9() {
+	local content
+
+	content=`awk ' $0 !~ /^ *#/ && /Options/ {
+		sub(" Indexes", " -Indexes", $0);
+		sub(" FollowSymLinks", " -FollowSymLinks", $0);
+	}
+
+	{ print }
+	' $apacheFile`
+
+    backupFile "$apacheFile" "data"
+
+	setContent "$apacheFile" "$content"
+	return
+}
+
+SUBCODE[10]="16"
+apply_10() {
+
+    backupFile "$apacheFile" "data"
+
+	setLine "$apacheFile" "^[^#]\+server-parsed.*\.html" "#"
+	return
+}
+
+SUBCODE[11]="24"
+apply_11() {
+
+  fix_perm_on_cert_files
+
+  return
+
+}
+
+

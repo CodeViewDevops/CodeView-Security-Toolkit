@@ -1,0 +1,174 @@
+###Please provide baseline name 
+BASE_NAME="Linux - Default (RedHat/CentOS/Debian)"
+
+###A brief description to clarify details on this baseline is placed here
+BASE_DESCRIPTION="Add a brief description on this baseline here... You can fill it out with anything to help users and analysts to understand what this baseline intends to restrict..."
+
+###Please provide a list for all items that must be ignored at all
+BASE_IGNORED=""
+
+###Please provide a list for all items that must be discussed (pending to be analyzed)
+BASE_PENDING_FOR_DISCUSSION=""
+
+###Please provide a list for all items that must be applied only by third party companies or vendors 
+BASE_ITEMS_WITH_DEPENDENCY=""
+
+###Please provide a list for all items that must be applied manually only
+BASE_MANUAL_ITEMS=""
+
+###Please provide the snmp community string and managers
+BASE_SNMP_COMMUNITY="str0ng_commuNitY!@$"
+BASE_SNMP_ALLOWED_HOSTS=""
+
+###Please provide the grub password
+BASE_GRUB_PASSWORD="!@GrUBp4SSw0rd123!@"
+
+###Please provide the default password length
+BASE_PASS_LEN="8"
+
+###Please provide the default password strenght and complexity
+BASE_PASS_DIFOK="4"
+BASE_PASS_LCREDIT="-1"
+BASE_PASS_UCREDIT="-1"
+BASE_PASS_DCREDIT="-1"
+BASE_PASS_OCREDIT="0"
+
+###Please provide the password expiration time (in days)
+BASE_PASS_DAYS="30"
+
+###Please provide the number of days to warn user until password expiration
+BASE_PASS_WARN_AGE="3"
+
+###Please provide the password history time
+BASE_PASS_HIST="12"
+
+###Please provide the maximum number of login attempts
+BASE_PASS_DENY="3"
+
+###Please provide the password unlock time, after unsuccessful login attempts (in seconds)
+BASE_PASS_UNLOCK="60"
+
+###Please provide the default console timeout (in seconds)
+BASE_TMOUT="900"
+
+###Please provide the system dns configuration (/etc/resolv.conf)
+BASE_DNS=" "
+
+###Please provide a list of system users that must have no password set
+BASE_NOPASS="adm bin daemon ftp games gopher guest halt ident lp lpd mail mailnull news nfsnobody nobody nscd operator pcap radvd rpc rpcuser rpm shutdown sync sys uucp vcsa xfs"
+
+###Please provide a list of system users that must have no valid shell
+BASE_NOSHELL="adm bin daemon ftp games gopher guest halt ident lp lpd mail mailnull news nfsnobody nobody nscd operator pcap radvd rpc rpcuser rpm shutdown sync sys uucp vcsa xfs"
+
+###Please provide a list of all valid shells
+BASE_SHELLS="
+/bin/ash
+/bin/bash
+/bin/bash2
+/bin/csh
+/bin/dash
+/bin/sh
+/bin/tcsh
+/bin/zsh
+"
+
+###Please provide the UMASK for root
+BASE_RUMASK="077"
+
+###Please provide the default UMASK (for all users except root)
+BASE_UMASK="022"
+
+###Please provide a list of users allowed or denied to use cron (use only one)
+BASE_CRON_ALLOW="root"
+BASE_CRON_DENY=""
+BASE_MSG_CRON_NOTFOUND=""
+
+###Please provide a list of users allowed or denied to use at (use only one)
+BASE_AT_ALLOW="root"
+BASE_AT_DENY=""
+BASE_MSG_AT_NOTFOUND=""
+
+###Please provide a list of allowed or denied service names
+BASE_SERV_ALLOW="
+auditd
+crond
+iptables
+irqbalance
+lvm2-monitor
+messagebus
+microcode_ctl
+netfs
+network
+rc.local
+readahead_early
+rsyslog
+sshd
+syslog
+xe-linux-distribution
+"
+
+BASE_SERV_DENY=""
+
+###Please provide a list of allowed or denied inetd's service names
+BASE_INETD_ALLOW=""
+BASE_INETD_DENY=""
+
+###Please provide a list of services that will not be protected through wrappers
+BASE_TCPD_IGNORE=""
+
+###Please provide a list of allowed or denied suids
+BASE_SID_ALLOW="/usr/sbin/userhelper
+/usr/sbin/suexec
+/usr/bin/passwd
+/usr/bin/sudo
+/usr/bin/sudoedit
+/usr/bin/crontab
+/bin/ping
+/bin/su
+/sbin/pam_timestamp_check
+/sbin/unix_chkpwd
+/sbin/unix2_chkpwd
+/sbin/pwdb_chkpwd
+"
+
+BASE_SID_DENY=""
+
+###Please provide the default system banners and any words considered as blacklist
+BASE_BANNER="Acesso restrito a usuarios autorizados."
+BASE_MOTD="Acesso restrito a usuarios autorizados."
+BASE_BANNER_BLACKLIST="Linux RedHat Fedora CentOS SuSE Ubuntu Debian Slackware"
+
+###Please define the decision to delete motd content or not
+BASE_EMPTY_MOTD="off"
+
+###Please provide a list of users allowed to use sudo
+BASE_SU_USERS="codeview root"
+
+###Please provide the group allowed to use su
+BASE_PRIVGROUP="wheel"
+
+###Please provide the group allowed to use compilers (c/gcc)
+BASE_COMPILER_GROUP="dev"
+
+###Please provide a list of users that their password must not be expired
+BASE_USERS_PASSWORD_NOT_EXPIRE="root"
+
+###Please provide the syslog level and facility for sudoers
+BASE_SUDOERS_SYSLOG="authpriv"
+BASE_SUDOERS_SYSLOG_GOODPRI="info"
+BASE_SUDOERS_SYSLOG_BADPRI="info"
+
+###Please provide the system syslog rules
+BASE_SYSLOG_RULES=""
+
+###Please provide all patches that will not be listed as vulnerable (analysis only)
+BASE_IGNORE_PATCH=""
+BASE_MSG_PATCH=""
+
+###Please provide all files that will not be listed as vulnerable (analysis only)
+BASE_LOG_ALLOW=""
+
+###Please provide all ETC files that will not be listed as vulnerable (analysis only)
+BASE_ETC_PERM_EXCEPTIONS="/etc/dumpdates
+/etc/oratab
+/etc/filesystems"

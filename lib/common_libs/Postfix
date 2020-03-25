@@ -1,0 +1,150 @@
+#===  FUNCTION  ================================================================
+#          NAME:  check_vrfy_postfix
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to postfix conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_vrfy_postfix() {
+    [ $# -lt 1 ] && return 0
+    local conf_file=$1
+    if [ -f "$conf_file" ]; then         
+        vrfy_value=`awk '/^\ *disable_vrfy_command\ *=\ *yes/ { print $0 }' $conf_file`
+        [ -z "$vrfy_value" ] && return 1
+        return 2
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  check_relay_hosts
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to postfix conf file, and the baseline variable BASE_POSTFIX_AUTH_HOSTS
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_relay_hosts() {
+
+        [ $# -lt 2 ] && return 0
+
+        local conf_file="$1"
+        local baseline_value="$2"
+
+        if [ -f "$conf_file" ]; then
+
+                local relay_hosts_conf=`cat $conf_file | awk '/^\ *mynetworks/' | sed 's/^\ *mynetworks\ *=\ *\(.*\)/\1/g' | sed 's/\ //g'`
+                local relay_hosts_base=`echo "$baseline_value" | sed 's/\ //g'`
+
+                [ -z "$relay_hosts_conf" ] && return 3
+                [ "$relay_hosts_conf" != "$relay_hosts_base" ] && return 1
+                return 2
+        else
+
+                return 0
+        fi
+}
+
+
+#===  FUNCTION  ================================================================
+#          NAME:  check_sendmail_permissions_postfix
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to postfix conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_sendmail_permissions_postfix() {
+
+[ "$#" -lt "1" ] && return 0
+
+	local perm_file="$1"
+	if [ -f "$perm_file" ]; then         
+
+		# if the permission is just a symlink, dont mark it as vulnerable
+		perm_value=`awk '(/^-rwx------/) || (/^l........./) { print $1 }' $perm_file`
+		[ -z "$perm_value" ] && return 1
+
+		return 2
+	else
+
+		return 0
+	fi
+}
+
+check_sendmail_permissions_path_postfix() {
+    [ $# -lt 1 ] && return 0
+    local sendmail_path=$1
+    if [ -f "$sendmail_path" ]; then         
+        perm_value=`ls -la $sendmail_path | awk '/^-rwx------/ { print $1 }'`
+        [ -z "$perm_value" ] && return 1
+        return 2
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  check_mqueue_permissions_postfix
+#   DESCRIPTION:  --
+#    PARAMETERS:  Path to postfix conf file
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+check_queue_permissions_postfix() {
+    [ $# -lt 1 ] && return 0
+    local perm_file=$1
+    if [ -f "$perm_file" ]; then         
+        perm_value=`awk '/^.rwx------/ { print $1 }' $perm_file`
+        [ -z "$perm_value" ] && return 1
+        return 2
+    else
+        return 0
+    fi
+}
+
+check_queue_permissions_path_postfix() {
+    [ $# -lt 1 ] && return 0
+    local queue_path=$1
+    if [ -d "$queue_path" ]; then         
+        perm_value=`ls -la $queue_path | awk '$(NF) == "." { print $0 }' | awk '/^.rwx------/ { print $1 }'`
+        [ -z "$perm_value" ] && return 1
+        return 2
+    else
+        return 0
+    fi
+}
+
+#===  FUNCTION  ================================================================
+#          NAME:  compare_postfix_versions
+#   DESCRIPTION:  --
+#    PARAMETERS: 
+#       RETURNS:  1 => vulnerable ; 2 => not vulnerable; 0 => error
+#===============================================================================
+compare_postfix_versions() {
+    [ $# -lt 2 ] && return 0
+    local current_version=$1
+    local last_version=$2
+    [ $current_version = $last_version ] && return 2
+    local current_number=`echo $current_version | sed -n 's/\([0-9]\+\)\..*/\1/g;/^[0-9]\+$/p'`
+    local last_number=`echo $last_version | sed -n 's/\([0-9]\+\)\..*/\1/g;/^[0-9]\+$/p'`
+    [ -z "$current_number" -o -z "$last_number" ] && return 0
+    current_number=$((current_number))
+    last_number=$((last_number))
+    [ $current_number -lt $last_number ] && return 1
+    [ $current_number -gt $last_number ] && return 2
+    [ $current_number -eq $last_number ] && {
+        current_number=`echo $current_version | sed -n 's/[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`
+        last_number=`echo $last_version | sed -n 's/[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`
+        [ -z "$current_number" -o -z "$last_number" ] && return 0
+        current_number=$((current_number))
+        last_number=$((last_number))
+        [ $current_number -lt $last_number ] && return 1
+        [ $current_number -gt $last_number ] && return 2
+        [ $current_number -eq $last_number ] && {
+            current_number=`echo $current_version | sed -n 's/[0-9]\+\.[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`
+            last_number=`echo $last_version | sed -n 's/[0-9]\+\.[0-9]\+\.\([0-9]\+\).*/\1/g;/^[0-9]\+$/p'`   
+            [ -z "$current_number" -o -z "$last_number" ] && return 0
+            current_number=$((current_number))
+            last_number=$((last_number))
+            [ $current_number -lt $last_number ] && return 1
+            [ $current_number -gt $last_number ] && return 2
+        }
+    }
+    return 2
+}

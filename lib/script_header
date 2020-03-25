@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# Unix Security 
+# http://www.codeview.com.br
+# 
+
+SCRIPT_VER=`cat $APP_PATH/.version`
+
+# Default script values
+SECURITY_DIR="/var/security"
+BACKUP_DIR="${SECURITY_DIR}/backup"
+LOGF="`pwd`/codeview-session"
+LOGE="`pwd`/codeview-session.err"
+UMASK=022
+PATH="/usr/xpg4/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+forcebackup=no
+baseline_set_by_user="off"
+ssh_baseline_set_by_user="off"
+samba_baseline_set_by_user="off"
+sendmail_baseline_set_by_user="off"
+apache_baseline_set_by_user="off"
+postfix_baseline_set_by_user="off"
+backupDirectory="$BACKUP_DIR"
+backupLogFile="`pwd`/session-restore.log"
+
+if [ "$OS" = "Linux" ]; then
+	TAR_PARAM=" --force-local -cvhf"
+else
+	TAR_PARAM="cvfh"
+fi
+
+if [ "`uname -s`" = "SunOS" ]; then
+        AWK=`which nawk 2>/dev/null` || AWK="/usr/xpg4/bin/awk"
+else
+        AWK=`which awk 2>/dev/null`
+fi
+
+[ -x "$AWK" ] || {
+        echo "[-] This script requires awk or nawk"
+        echo "[-] Exiting..."
+        exit 1
+}
+
+

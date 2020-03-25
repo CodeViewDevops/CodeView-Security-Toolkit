@@ -1,0 +1,21 @@
+
+#===  FUNCTION  ================================================================
+#          NAME:  fix_irrestrict_su_redhat
+#   DESCRIPTION:  Fix the irrestric use of 'su' command on RedHat.
+#    PARAMETERS:  --
+#       RETURNS:  0 = success ; 1 = failure
+#===============================================================================
+
+fix_irrestrict_su_redhat () {
+
+  if [ "$LINUX_DISTRO_TOKEN" != "redhat" ]; then
+
+    return 1 #FIXME
+
+  fi
+
+  fix_irrestrict_su_common
+
+  return $? 
+
+}

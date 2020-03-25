@@ -1,0 +1,11 @@
+Cabeçalho de opções do tipo de conteúdo X ausente
+Proteção XSS do navegador da Web não ativada
+Incompleto ou sem controle de cache e cabeçalho HTTP 
+Divulgação de IP Privada
+Inclusão de arquivo de origem de JavaScript entre domínios
+
+Incomplete or No Cache-control and Pragma HTTP Header Set
+Web Browser XSS Protection Not Enabled
+X-Content-Type-Options Header Missing
+Private IP Disclosure
+Cross-Domain JavaScript Source File Inclusion

@@ -1,0 +1,141 @@
+BASE_IDS="1 2 3"
+
+SUBCODE[1]="8300"
+apply_1() {
+    postfixConfBin="$postfixHome/postconf"
+    postfixConfDir=`$postfixConfBin -d | awk '/^\ *config_directory/ { print $0}' | sed 's/\ *config_directory\ *=\ *//g'`
+    postfixConfFile="$postfixConfDir/main.cf"
+
+    # Checking if the file exist
+    [ -f "$postfixConfFile" ] || {
+        MISSED_FILE="$postfixConfFile"
+        return $CODE_MISSED_FILE
+    }
+
+    # Need correction?
+    local need_correction
+
+    # Analyzing
+    check_vrfy_postfix $postfixConfFile
+    case $? in
+        0) return $CODE_ERROR
+        ;;
+        1) need_correction=1
+        ;;
+        2) return $CODE_OK
+        ;;
+    esac
+
+    # Fixing
+    [ $need_correction -eq 1 ] && {
+        backupFile "$postfixConfFile" "data"
+        sed -i '/^\ *disable_vrfy_command/d' $postfixConfFile
+        echo "disable_vrfy_command = yes" >> $postfixConfFile
+    }
+    return $CODE_OK
+}
+
+SUBCODE[2]="8301"
+apply_2() {
+
+        postfixConfBin="$postfixHome/postconf"
+        postfixConfDir=`$postfixConfBin -d | awk '/^\ *config_directory/ { print $0}' | sed 's/\ *config_directory\ *=\ *//g'`
+        postfixConfFile="$postfixConfDir/main.cf"
+
+        # Checking if the file exist
+        [ -z "$BASE_POSTFIX_AUTH_HOSTS" ] && {
+
+                echo "Impossible to fix item due to baseline variable definition (BASE_POSTFIX_AUTH_HOSTS)."
+                return ${CODE_ERROR}
+        }
+
+        [ -f "$postfixConfFile" ] || {
+
+                MISSED_FILE="$postfixConfFile"
+                return ${CODE_MISSED_FILE}
+        }
+
+        # Need correction?
+        local need_correction="0"
+        local need_update="0"
+
+        check_relay_hosts "$postfixConfFile" "$BASE_POSTFIX_AUTH_HOSTS"
+        local result="$?"
+
+        case "$result" in
+
+                0) return ${CODE_ERROR}
+                ;;
+
+                1) need_correction="1"
+                ;;
+
+                2) return "$CODE_CONFORMITY"
+                ;;
+
+                3) need_update="1"
+                ;;
+        esac
+
+        # Fixing
+        [ "$need_correction" -eq "1" ] && {
+
+                backupFile "$postfixConfFile" "data"
+
+                temp_postfix_file=`mktemp /tmp/XXXXXXXXXX`
+                chmod 700 $temp_postfix_file
+
+                sed "s/^\ *\(mynetworks\ *=\ *\).*/\1 `echo $BASE_POSTFIX_AUTH_HOSTS`/g" "$postfixConfFile" > "$temp_postfix_file" 2>/dev/null
+                cat  "$temp_postfix_file" > "$postfixConfFile"
+
+                rm -f "$temp_postfix_file"
+                return ${CODE_OK}
+        }
+
+        [ "$need_update" -eq "1" ] && {
+
+                backupFile "$postfixConfFile" "data"
+                echo "mynetworks = $BASE_POSTFIX_AUTH_HOSTS" >> "$postfixConfFile"
+
+                return ${CODE_OK}
+        }
+
+        return "$CODE_CONFORMITY"
+}
+
+SUBCODE[3]="8302"
+apply_3() {
+
+    [ -f "$postfixHome/sendmail" ] && file="$postfixHome/sendmail"
+    postfixSendmailBin=`collect_original_file_perm "$file"`
+
+    # Checking if the file exist
+    [ -f "$postfixSendmailBin" ] || {
+
+	MISSED_FILE="$postfixSendmailBin"
+	return $CODE_MISSED_FILE
+    }
+
+    # Need correction?
+    local need_correction
+
+    # Analyzing
+    check_sendmail_permissions_path_postfix $postfixSendmailBin
+    case $? in
+        0) return $CODE_ERROR
+        ;;
+        1) need_correction=1
+        ;;
+        2) return $CODE_OK
+        ;;
+    esac
+
+    # Fixing
+    [ $need_correction -eq 1 ] && {
+
+        backupFile "$postfixSendmailBin" "perm"
+        chmod 0700 $postfixSendmailBin
+    }
+
+    return $CODE_OK
+}

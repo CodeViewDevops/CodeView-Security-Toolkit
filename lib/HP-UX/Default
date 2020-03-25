@@ -1,0 +1,2402 @@
+# -------------
+# HP-UX Library
+# -------------------------------------------------------------------
+TARGET_OS="HP-UX"
+TECH_VER=2
+
+. "$APP_PATH/lib/HP-UX/include.sh"
+
+# List of enabled routines
+BASE_IDS="1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 46 47 48 49 50 51 52 53 54 55 56 57"
+
+setSyslogd() {
+
+	file=/etc/rc.config.d/syslogd
+
+	# test if already done
+	( ps -ef | grep "bin/syslogd" | grep -v grep | grep DN ) >> "$LOGF" && return $CODE_CONFORMITY 
+	
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+	
+	backupFile "$file" "data" '/sbin/init.d/syslogd stop && /sbin/init.d/syslogd start'
+
+	setLine "$file" "^[[:blank:]]*export[[:blank:]]*SYSLOGD_OPTS" "export SYSLOGD_OPTS=\"-DN\"" "[-]DN"
+
+	RET=$?
+
+	[ $RET -eq 0 ] && {
+		[ $verbosity ] && echo "    [+] Restarting syslog daemon service..."
+		echo "Restarting syslog daemon service..." >> "$LOGF"
+		if ( /sbin/init.d/syslogd stop && /sbin/init.d/syslogd start ) 2>&1 >> "$LOGF" ; then
+			[ $verbosity ] && echo "Testing implementation..."
+			echo "Testing implementation..." >> "$LOGF"
+			( ps -ef | grep syslogd | grep -v grep | grep DN ) >> "$LOGF" || {
+				[ $verbosity ] && echo "    [-] This version is not compatible with -DN option"
+				echo " This version is not compatible with -DN option" >> "$LOGF"
+			}
+		else
+      [ $verbosity ] && {
+        echo "    [-] Problems restarting syslogd"
+        echo "    [-] Try to restart it manually"
+      }
+      echo "Problems restarting syslogd" >> "$LOGF"
+      echo "Try to restart it manually" >> "$LOGF"
+
+		fi
+	}
+
+	return $RET
+
+}
+
+check_trusted() {
+
+        # check if already trusted
+        if [ -s "/tcb/files/auth/system/default" ]; then
+
+                return 0
+        else
+
+		return 1
+	fi
+}
+
+
+# change /etc/rc.config.d/nddconf settings
+setNdd() {
+
+  [ $# -lt 3 ] && {
+    echo "Not enough parameters when calling setNdd" >> "$LOGF"
+    [ $verbosity ] && echo "Not enough parameters when calling setNdd"
+    return $CODE_ERROR
+  }
+
+	file=$1 
+  proto=$2 
+  name=$3 
+  value=$4
+
+	ndd -c 2>> "$LOGF" >> "$LOGF" || {
+    echo "Error executing \"ndd -c\". Perhaps this version is not compatible." >> "$LOGF"
+    [ $verbosity ] && echo "    Error executing \"ndd -c\". Perhaps this version is not compatible."
+    return $CODE_FAILURE
+  }
+
+	# test if already done
+	( ndd -get /dev/$proto $name | grep $value ) 2>&1 >> "$LOGF" && return $CODE_CONFORMITY 
+
+	backupFile "$file" "data" 'ndd -c'
+
+	echo 2>> "$LOGF" >> $file || {
+    return $CODE_ERROR 
+  }
+
+	confid=`awk -v NAME=$name '{
+		if($0 ~ "^[[:blank:]]*NDD_NAME\[.*\]=" NAME) {
+			match($0,/[0-9]+/)
+			print substr($0,RSTART,RLENGTH)
+			exit 0
+		}
+	}' $file 2>> "$LOGF"` || return $CODE_ERROR 
+
+	# delete old config if exist
+	[ -n "$confid" ] && {
+		[ $verbosity ] && echo "    Removing old entry for $name"
+		echo "Removing old entry for $name" >> "$LOGF"
+
+		setLine "$file" "^[[:blank:]]*NDD_NAME[[]$confid[]]" "#"
+		setLine "$file" "^[[:blank:]]*NDD_VALUE[[]$confid[]]" "#"
+		setLine "$file" "^[[:blank:]]*TRANSPORT_NAME[[]$confid[]]" "#"
+	}
+
+	echo "TRANSPORT_NAME[666]=$proto" >> $file
+	echo "NDD_NAME[666]=$name" >> $file
+	echo "NDD_VALUE[666]=$value" >> $file
+
+	# reorder
+	echo "Reordering file $file" >> "$LOGF"
+	[ $verbosity ] && echo "    Reordering file $file"
+	awk -v FILE=$file '
+	BEGIN {
+		C1=0
+		C2=0
+		C3=0
+		"mktemp" | getline TMP
+	}
+
+	{
+		if($0 ~ "^[[:blank:]]*NDD_NAME") {
+			sub(/[[:digit:]]+/,C1)
+			print $0 >> TMP
+			C1++
+		}
+		if($0 ~ "^[[:blank:]]*NDD_VALUE") {
+			sub(/[[:digit:]]+/,C2)
+			print $0 >> TMP
+			C2++
+		}
+		if($0 ~ "^[[:blank:]]*TRANSPORT_NAME") {
+			sub(/[[:digit:]]+/,C3)
+			print "" >> TMP
+			print $0 >> TMP
+			C3++
+		}
+	}
+
+	END {
+
+		CMD="cat " TMP " > " FILE " && rm -f " TMP
+		if(system(CMD)) {
+			print "Error executing " CMD >> LOGF
+			exit 1
+		} else {
+			exit 0
+		}
+
+	}' $file 2>> "$LOGF" || return $CODE_ERROR 
+
+	RET=$?
+
+	# reload value
+	old=0
+	ndd -c 2>&1 >> "$LOGF" || {
+		case $name in
+			ip_forward_directed_broadcast)
+			old=1
+			;;
+			ip_respond_to_echo_broadcast)
+			old=1
+			;;
+			tcp_syn_rcvd_max)
+			old=1
+			;;
+		esac
+
+		if [ $old = 1 ]; then
+			[ $verbosity ] && echo "    Error executing \"ndd -c\". Could not load: $name"
+			echo "Error executing \"ndd -c\". Could not load: $name" >> "$LOGF"
+		else
+			[ $verbosity ] && echo "    Error executing \"ndd -c\". There are maybe some modules not supported on config file."
+			echo "Error executing \"ndd -c\". There are maybe some modules not supported on config file." >> "$LOGF"
+		fi
+	}
+
+	return $RET
+}
+
+SUBNAME[1]="Enable banner displaying for Telnet daemon"
+SUBCODE[1]="4601"
+apply_1() {
+
+  # related files
+  file=/etc/issue
+	inetd=/etc/inetd.conf
+	cmd=""
+
+	# initial checks
+	[ -n "$BASE_BANNER" ] || {
+		MISSED_VAR="BASE_BANNER"	
+		return $CODE_MISSED_VAR 
+	}
+
+  content=`cat $file`
+
+  [ "$content" = "$BASE_BANNER" ] && return $CODE_CONFORMITY
+
+	[ -a "$file" ] || cmd="rm $file"
+
+	backupFile "$file $inetd" "data" "$cmd"
+
+	setContent "$file" "$BASE_BANNER"
+	RET=$?
+
+	if [ $RET -eq $CODE_OK -o $RET -eq $CODE_CONFORMITY ]; then
+
+		# change inetd.conf
+		awk -v LOGF="$LOGF" -v FILE="$inetd" '
+		BEGIN {
+			"mktemp" | getline OUT
+			CHANGE=0
+		}
+				
+		{
+			if(match($0,/^[[:blank:]]*telnet[[:blank:]]*stream[[:blank:]]*tcp/)) {
+				if(!match($0,/[-]b/)) {
+					CHANGE=1
+					gsub(/ telnetd /, " telnetd -b ",$0)
+					print $0 >> OUT
+				} else {
+					print $0 >> OUT
+				}
+			} else {
+				print $0 >> OUT
+			}
+		}
+
+		END {
+
+			if(CHANGE)
+				CMD="cat " OUT " > " FILE " && rm -f " OUT
+			else
+				CMD="rm -f " OUT
+
+			close(OUT)
+
+			if(system(CMD)) {
+				print "Error executing: " CMD >> LOGF
+				print "Perhaps " FILE " has no writing permission" >> LOGF
+				exit 1
+			}
+
+			# already done or in accordance
+			if(CHANGE==0)
+				exit 22
+
+		}' $inetd 2>> "$LOGF"
+		
+		return
+		
+  fi
+
+  return $RET
+}
+
+SUBNAME[2]="Set default UMASK=$BASE_UMASK"
+SUBCODE[2]="4585"
+apply_2() {
+
+	files="/etc/profile /etc/bashrc"
+  target_files=""
+
+	[ -n "$BASE_UMASK" ] || {
+		MISSED_VAR="BASE_UMASK"
+		return $CODE_MISSED_VAR 
+	}
+
+  in_accordance=0
+  for f in $files; do
+    egrep -q "^[ \t]*umask[ \t]+$BASE_UMASK" "$f" || {
+      in_accordance=1
+      target_files="${target_files} $f"
+    }
+  done
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+	backupFile "$target_files" "data"
+
+  for file in $target_files; do
+    setLine "$file" "^[[:blank:]]*#*[[:blank:]]*umask" "umask $BASE_UMASK" "^[[:blank:]]*umask[[:blank:]]+$BASE_UMASK"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  done
+
+	return $CODE_OK
+}
+
+SUBNAME[3]="Disable external connections to Syslog daemon"
+SUBCODE[3]="4560"
+apply_3() {
+
+	setSyslogd
+	return
+
+}
+
+SUBNAME[4]="Set administrators group: $BASE_SUGROUP"
+SUBCODE[4]="4570"
+apply_4() {
+
+        file=/etc/default/security
+        group=/etc/group
+
+        [ -n "$BASE_SUGROUP" ] || {
+
+                MISSED_VAR="BASE_SUGROUP"
+                return $CODE_MISSED_VAR
+        }
+
+        [ -n "$BASE_SU_USERS" ] || {
+
+                MISSED_VAR="BASE_SU_USERS"
+                return $CODE_MISSED_VAR
+        }
+
+        base_su_users="`for i in $BASE_SU_USERS; do echo_n $i,; done`"
+        sugroup_users=`awk -v G="$BASE_SUGROUP" -F: ' $0 ~ "^" G ":" { printf $4; exit; }' $group`
+
+        [ -n "$sugroup_users" ] && [ "$sugroup_users" = "$base_su_users" ] && egrep -q "^[ \t]*SU_ROOT_GROUP[ \t]*=[ \t]*$BASE_SUGROUP" "$file" && return $CODE_CONFORMITY
+
+        [ -d /etc/default ] || {
+
+                mkdir -p /etc/default 2>> "$LOGF" && chmod 755 /etc/default 2>> "$LOGF" || {
+
+                        return $CODE_ERROR
+                }
+        }
+
+        backupFile "$file $group" "data"
+
+        egrep "^$BASE_SUGROUP:" "$group" >> "$LOGF" || {
+
+                groupadd "$BASE_SUGROUP" 2>> "$LOGF" || {
+
+                        return ${CODE_ERROR}
+                }
+        }
+
+        begin=`awk -v G="$BASE_SUGROUP" -F: ' $0 ~ "^" G ":" { printf $1":"$2":"$3":"; exit; }' "$group"`
+        base_su_users=`echo "$base_su_users" | sed 's/\,$//g'`
+        base_su_users="${begin}${base_su_users}"
+
+        setLine "$file" "^[[:blank:]]*#*[[:blank:]]*SU_ROOT_GROUP" "SU_ROOT_GROUP=$BASE_SUGROUP" "^[[:blank:]]*SU_ROOT_GROUP=$BASE_SUGROUP"
+        RET="$?"
+
+        [ ${RET} -eq ${CODE_ERROR} ] && return ${RET}
+
+        setLine "$group" "^$BASE_SUGROUP:" "$base_su_users" "^$base_su_users$"
+        return 
+}
+
+SUBNAME[5]="Set minimum password length: $BASE_PASS_LEN"
+SUBCODE[5]="4587"
+apply_5() {
+
+	file=/etc/default/security
+
+	[ -n "$BASE_PASS_LEN" ] || {
+		MISSED_VAR="BASE_PASS_LEN"
+		return $CODE_MISSED_VAR 
+	}
+
+  [ -f "$file" ] && grep -q "^[ \t]*MIN_PASSWORD_LENGTH[ \t]*=[ \t]*$BASE_PASS_LEN" "$file" && return $CODE_CONFORMITY
+
+	[ -d /etc/default ] || {
+		mkdir /etc/default 2>> "$LOGF" && chmod 755 /etc/default 2>> "$LOGF" || return 1
+	}
+
+	backupFile "$file" "data"
+
+	setLine "$file" "^[[:blank:]]*#*[[:blank:]]*MIN_PASSWORD_LENGTH" "MIN_PASSWORD_LENGTH=${BASE_PASS_LEN}" "^[[:blank:]]*MIN_PASSWORD_LENGTH=$BASE_PASS_LEN"
+	return	
+}
+
+SUBNAME[6]="Force the use of a valid home directories"
+SUBCODE[6]="4600"
+apply_6() {
+
+	file=/etc/default/security
+
+	[ -d /etc/default ] || {
+		mkdir /etc/default 2>> "$LOGF" && chmod 755 /etc/default 2>> "$LOGF" || return 1
+	}
+
+  [ -f "$file" ] && grep -q "^[ \t]*ABORT_LOGIN_ON_MISSING_HOMEDIR[ \t]*=[ \t]*1" "$file" && return $CODE_CONFORMITY
+
+	backupFile "$file" "data"
+
+	setLine "$file" "^[[:blank:]]*#*[[:blank:]]*ABORT_LOGIN_ON_MISSING_HOMEDIR" "ABORT_LOGIN_ON_MISSING_HOMEDIR=1" "^[[:blank:]]*ABORT_LOGIN_ON_MISSING_HOMEDIR=1"
+	return	
+}
+
+SUBNAME[7]="Set password history size: ${BASE_HISTORY}"
+SUBCODE[7]="4596"
+apply_7() {
+
+	file=/etc/default/security
+
+	[ -n "${BASE_HISTORY}" ] || {
+		MISSED_VAR="BASE_HISTORY"
+		return $CODE_MISSED_VAR 
+	}
+
+  [ -f "$file" ] && grep -q "^[ \t]*PASSWORD_HISTORY_DEPTH[ \t]*=[ \t]*$BASE_HISTORY" "$file" && return $CODE_CONFORMITY
+
+	[ -d /etc/default ] || {
+		mkdir /etc/default 2>> "$LOGF" && chmod 755 /etc/default 2>> "$LOGF" || return 1
+	}
+
+	backupFile "$file" "data"
+
+	setLine "$file" "^[[:blank:]]*#*[[:blank:]]*PASSWORD_HISTORY_DEPTH" "PASSWORD_HISTORY_DEPTH=${BASE_HISTORY}" "^[[:blank:]]*PASSWORD_HISTORY_DEPTH=${BASE_HISTORY}"
+	return	
+}
+
+SUBNAME[8]="Disable /etc/copyright information on /etc/profile"
+SUBCODE[8]="4602"
+apply_8() {
+
+	file=/etc/profile
+
+
+	# if file does not exists, nothing can be done
+	[ -s $file ] ||	return $CODE_CONFORMITY
+
+  grep -q "^[[:blank:]]*cat[[:blank:]]*/etc/copyright" "$file" || return $CODE_CONFORMITY
+		
+	backupFile "$file" "data"
+
+	setLine "$file" "^[[:blank:]]*cat[[:blank:]]*/etc/copyright" "#"
+	return	
+}
+
+
+SUBNAME[9]="Disable ip forwarding"
+SUBCODE[9]="4575"
+apply_9() {
+	file=/etc/rc.config.d/nddconf
+
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || {
+      echo "FAILURE: mkdir /etc/rc.config.d && chmod 755 /etc/rc.config.d" >> "$LOGF"
+      return $CODE_ERROR 
+    }
+	}
+
+	setNdd "$file" "ip" "ip_forwarding" "0"
+	return
+}
+
+SUBNAME[10]="Disable direct broadcast"
+SUBCODE[10]="4576"
+apply_10() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_forward_directed_broadcasts" "0"
+	return
+}
+
+SUBNAME[11]="Disable broadcast icmp echo replies"
+SUBCODE[11]="4577"
+apply_11() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_respond_to_echo_broadcast" "0"
+	return
+}
+
+SUBNAME[12]="Disable timestamps replies"
+SUBCODE[12]="4578"
+apply_12() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_respond_to_timestamp" "0"
+	return
+}
+
+SUBNAME[13]="Disable broadcast timestamps replies"
+SUBCODE[13]="4579"
+apply_13() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_respond_to_timestamp_broadcast" "0"
+	return
+}
+
+SUBNAME[14]="Disable source route packets forwading"
+SUBCODE[14]="4580"
+apply_14() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_forward_src_routed" "0"
+	return
+}
+
+SUBNAME[15]="Disable icmp redirects"
+SUBCODE[15]="4581"
+apply_15() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_send_redirects" "0"
+	return
+}
+
+SUBNAME[16]="Enable syn flood protection"
+SUBCODE[16]="4558"
+apply_16() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "tcp" "tcp_syn_rcvd_max" "500"
+	return
+}
+
+SUBNAME[55]="Enable arp flood protection"
+SUBCODE[55]="4706"
+apply_55() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "arp" "arp_cleanup_interval" "60000"
+	return
+}
+
+SUBNAME[56]="System is responding to network mask query packets"
+SUBCODE[56]="4707"
+apply_56() {
+	file=/etc/rc.config.d/nddconf
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	setNdd "$file" "ip" "ip_respond_to_address_mask_broadcast" "0"
+	return
+}
+
+
+SUBNAME[57]="Permissions on crontab files are incorrect"
+SUBCODE[57]="4708"
+apply_57() {
+
+	files=`find /var/spool/cron/crontabs/ -type f \( -perm -g=w -o -perm -g=r -o -perm -o=w -o -perm -o=r \) 2>/dev/null`
+	[ -n "$files" ] && backupFile "$files" "perm"
+	for file in ${files}; do
+
+		chmod 600 $file 2>>"$LOG" >>"$LOG"
+	done
+	return
+}
+
+
+
+SUBNAME[17]="Set temporary directories permission"
+SUBCODE[17]="4582"
+apply_17() {
+
+	files="/tmp /var/tmp /var/preserve"
+  target_files=""
+	ok=1
+
+	for f in $files; do
+
+		[ -d $f ] || continue
+
+		( \ls -ld $f | grep rwt ) >> "$LOGF" 2>&1 && continue
+		ok=0
+
+    target_files="${target_files} $f"
+	done
+	
+	[ $ok -eq 1 ] && return $CODE_CONFORMITY 
+
+	backupFile "$files" "perm"
+
+  for f in $target_files; do
+    setPerm "$f" "1777"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  done
+
+	return $CODE_OK
+}
+
+SUBNAME[18]="Remove public writable files in /etc"
+SUBCODE[18]="4584"
+apply_18() {
+	setEtcPerm
+	return
+
+}
+
+SUBNAME[19]="Disable SNMP services"
+SUBCODE[19]="4604"
+apply_19() {
+	
+	funix=/etc/rc.config.d/SnmpHpunix
+	fmaster=/etc/rc.config.d/SnmpMaster
+	fmib=/etc/rc.config.d/SnmpMib2
+	ftrap=/etc/rc.config.d/SnmpTrpDst
+
+	# check if is running
+	[ $verbosity ] && echo_n "    Checking process [snmpdm]: "
+	echo "Checking process [snmpdm]: " >> "$LOGF"
+	( ps -e | awk ' $NF == "snmpdm" { print $1 } ' | grep [0-9] ) >> "$LOGF" 2>&1 || {
+		[ $verbosity ] && echo "not running..."
+		echo "not running..." >> "$LOGF"
+		return $CODE_CONFORMITY 
+	}
+	
+	[ $verbosity ] && echo "running..."
+	echo "running..." >> "$LOGF"
+
+  #CONFORMIDADE
+  [ -f "$funix" ] && grep -q "^[ \t]*SNMP_HPUNIX_START[ \t]*=[ \t]*0" "$funix" && {
+    [ -f "$fmaster" ] && grep -q "^[ \t]*SNMP_MASTER_START[ \t]*=[ \t]*0" "$fmaster" && {
+      [ -f "$fmib" ] && grep -q "^[ \t]*SNMP_MIB2_START[ \t]*=[ \t]*0" "$fmib" && {
+        [ -f "$ftrap" ] && grep -q "^[ \t]*SNMP_TRAPDEST_START=0" "$ftrap" && {
+          return $CODE_CONFORMITY
+        }
+      }
+    }
+  }
+
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || {
+      return $CODE_ERROR 
+    }
+	}
+
+	backupFile "$funix $fmaster $fmib $ftrap" "data" 'for c in /sbin/init.d/SnmpMaster /sbin/init.d/SnmpHpunix /sbin/init.d/SnmpMib2 /sbin/init.d/SnmpTrpDst; do [ -s $c ] && $c start || return 1 ; done'
+
+	# change init scripts
+	[ -f $funix ] || setContent "$funix" "SNMP_HPUNIX_START=0" || return "$CODE_ERROR" 
+	setLine "$funix" "^[[:blank:]]*SNMP_HPUNIX_START=" "SNMP_HPUNIX_START=0" "^SNMP_HPUNIX_START=0"
+	[ $? -eq $CODE_ERROR ] && return $CODE_ERROR 
+
+	[ -f $fmaster ] || setContent "$fmaster" "SNMP_MASTER_START=0" || return "$CODE_ERROR" 
+	setLine "$fmaster" "^[[:blank:]]*SNMP_MASTER_START=" "SNMP_MASTER_START=0" "^SNMP_MASTER_START=0"
+	[ $? -eq $CODE_ERROR ] && return "$CODE_ERROR" 
+	
+	[ -f $fmib ] || setContent "$fmib" "SNMP_MIB2_START=0" || return "$CODE_ERROR"
+	setLine "$fmib" "^[[:blank:]]*SNMP_MIB2_START=" "SNMP_MIB2_START=0" "^SNMP_MIB2_START=0"
+	[ $? -eq $CODE_ERROR ] && return $CODE_ERROR 
+	
+	[ -f $ftrap ] || setContent "$ftrap" "SNMP_TRAPDEST_START=0" || return "$CODE_ERROR" 
+	setLine "$ftrap" "^[[:blank:]]*SNMP_TRAPDEST_START=" "SNMP_TRAPDEST_START=0" "^SNMP_TRAPDEST_START=0"
+#AQUI
+	[ $? -eq $CODE_ERROR ] && return "$CODE_ERROR" 
+	
+	cmd="true"
+	for c in /sbin/init.d/SnmpMaster /sbin/init.d/SnmpHpunix /sbin/init.d/SnmpMib2 /sbin/init.d/SnmpTrpDst; do
+		[ -x $c ] && cmd="$cmd && $c stop"
+	done
+
+	[ "$cmd" = "true" ] && {
+		[ $verbosity ] && echo "    No daemons found in /sbin/init.d directory. SNMP service could not be stoped."
+		echo "No daemons found in /sbin/init.d directory. SNMP service could not be stoped." >> "$LOGF"
+		return $CODE_ERROR 
+	}
+	
+	[ $verbosity ] && echo_n "    Stoping SNMP services: "
+	echo_n "    Stoping SNMP services: " >> "$LOGF"
+	
+	echo "CMD: $cmd" >> "$LOGF"
+	eval $cmd >> "$LOGF" 2>&1
+	[ $? -eq 1 ] && {
+		[ $verbosity ] && echo "problems stoping SnmpMaster, SnmpHpunix, SnmpMib2 and SnmpTrpDst"
+		echo "problems stoping SnmpMaster, SnmpHpunix, SnmpMib2 and SnmpTrpDst" >> "$LOGF"
+		return $CODE_OK 
+	}
+
+	# reach here, its ok
+	[ $verbosity ] && echo "ok"
+	echo "ok" >> "$LOGF"
+	return $CODE_OK 
+	
+}
+
+SUBNAME[20]="Enable Cron restrictions"
+SUBCODE[20]="4593"
+apply_20() {
+	file=/var/adm/cron/cron.allow
+
+	[ -n "$BASE_CRON_ALLOW" ] || return $CODE_CONFORMITY 
+
+	cronContent=""
+        in_accordance=0
+
+        # selecting only the users defined on baseline that exist on system.
+        base_users=`user_exists "$BASE_CRON_ALLOW"`
+        [ -z "$base_users" ] && {
+          echo "None of the users defined on baseline exist on system." >> $LOGF
+          return $CODE_CONFORMITY
+        }
+
+	for user in $base_users; do
+                cronContent="$cronContent
+$user"
+                grep -q "^$user" "$file" && in_accordance=1
+	done
+
+        [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+        file_exists=1
+	[ -f "$file" ] && {
+                file_exists=0
+                backupFile "$file" "data"
+        }
+
+	setContent "$file" "$cronContent"
+        RET=$?
+
+        [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+	return $RET
+}
+
+SUBNAME[21]="Enable At restrictions"
+SUBCODE[21]="4594"
+apply_21() {
+	file=/var/adm/cron/at.allow
+
+	[ -n "$BASE_AT_ALLOW" ] || return $CODE_CONFORMITY
+
+	[ -a "$file" ] || cmd="rm $file"
+
+	atContent=""
+        in_accordance=0
+
+        # selecting only the users defined on baseline that exist on system.
+        base_users=`user_exists "$BASE_AT_ALLOW"`
+        [ -z "$base_users" ] && {
+          echo "None of the users defined on baseline exist on system." >> $LOGF
+          return $CODE_CONFORMITY
+        }
+
+	for user in $base_users; do
+		atContent="$atContent
+$user"
+                grep -q "^$user" "$file" && in_accordance=1
+	done
+
+        [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+        file_exists=1
+        [ -f "$file" ] && {
+                file_exists=0
+                backupFile "$file" "data"
+        }
+
+	setContent "$file" "$atContent"
+        RET=$?
+
+        [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+	return $RET 
+}
+
+SUBNAME[22]="Set console timeout: $BASE_TMOUT"
+SUBCODE[22]="4599"
+apply_22() {
+
+  fix_tmout /etc/profile "$BASE_TMOUT"
+	return
+
+}
+
+SUBNAME[23]="Remove public readable files in log directorires"
+SUBCODE[23]="4607"
+apply_23() {
+	setLogPerm
+  return_code=$?
+  [ "$INSTALL_FIX_AUDIT_SCRIPT" = "0" ] && install_fix_audit_script
+	return $return_code
+}
+
+SUBNAME[24]="Remove public executable compilers in PATH"
+SUBCODE[24]="4589"
+apply_24() {
+	setCompilerPerm
+	return
+}
+
+SUBNAME[25]="Remove SUID/SGID files in PATH"
+SUBCODE[25]="4561"
+apply_25() {
+
+	# check if one of baseline variables are set
+	[ -n "$BASE_SID_DENY" -o -n "$BASE_SID_ALLOW" ] || {
+		MISSED_VAR="BASE_SID_DENY/ALLOW"	
+		return $CODE_MISSED_VAR 
+	}
+
+	setSid "/usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /bin /sbin "
+
+	return
+
+}
+
+SUBNAME[26]="Enable inetd service logging"
+SUBCODE[26]="4565"
+apply_26() {
+
+	file=/etc/rc.config.d/netdaemons
+	
+	# test if already done
+	
+  in_accordance=0
+  proc=`( ps -ef | grep "inetd" | grep -v grep | head -n 1 | grep "\-l" ) >> "$LOGF"` || in_accordance=1 
+  conf=`grep "^[ \t]*INETD_ARGS[ \t]*=[ \t]*-l" "$file"` || in_accordance=1 
+
+	[ -d /etc/rc.config.d ] || {
+		mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || {
+      return $CODE_ERROR
+    }
+	}
+
+	backupFile "$file" "data" 'kill -9 `ps -ef | grep "inetd" | grep -v grep | head -n 1 | awk '{ print $2 }'` && inetd &'
+
+  [ -z "$conf" ] && {
+    setLine "$file" "^[[:blank:]]*INETD_ARGS=" "INETD_ARGS=-l" "INETD_ARGS=-l"
+    RET=$?
+    [ $RET -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+	[ -z "$proc" ] || [ -z "$conf" ] && {
+		# restart inetd
+		[ $verbosity ] && echo "    Restarting inetd service..."
+		echo "    Restarting inetd service..." >> "$LOGF"
+		local pid=`ps -ef | grep "inetd" | grep -v grep | head -n 1 | awk '{ print $2 }'`
+		kill -9 $pid 2>> "$LOGF" || return $CODE_ERROR 
+		inetd -l & 2>> "$LOGF" || return $CODE_ERROR 
+	}
+
+	return $RET
+
+}
+
+SUBNAME[27]="Disable trust relationship"
+SUBCODE[27]="4606"
+apply_27() {
+	setTrust
+	return
+}
+
+
+SUBNAME[28]="Disable remote login for superuser"
+SUBCODE[28]="4571"
+apply_28() {
+
+	file=/etc/securetty
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	setContent "$file" "console"
+  RET=$?
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file" 
+
+	return $RET
+
+}
+
+SUBNAME[29]="Disable all privileged groups"
+SUBCODE[29]="4569"
+apply_29() {
+
+	file=/etc/privgroup
+  rollback="/sbin/init.d/set_prvgrp start"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data" "$rollback"
+  }
+
+	backupFile "$file" "data" "$cmd"
+
+    [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file; $rollback"
+	setContent "$file" "-n"
+	RET=$?
+
+	[ $RET -gt 0 ] && return $RET
+
+	[ -f /sbin/init.d/set_prvgrp ] && /sbin/init.d/set_prvgrp start
+	return
+
+}
+
+SUBNAME[30]="Disable rpcbind daemon"
+SUBCODE[30]="4567"
+apply_30() {
+
+	files="/sbin/rc1.d/K600nfs.core /sbin/rc2.d/S400nfs.core /usr/sbin/rpcbind"
+	in_accordance=0
+
+	# test if already done
+	( ps -ef | grep "bin/rpcbind" | grep -v grep ) >> "$LOGF" 2>&1 || return $CODE_CONFORMITY 
+	
+	pid=`ps -ef | grep "bin/rpcbind" | grep -v grep | head -n 1 | awk '{ print $2 }'`
+
+	[ -n "$pid" ] || return $CODE_CONFORMITY 
+	
+	backupFile "$files" "data" '/usr/sbin/rpcbind &'
+
+	for f in $files; do 
+
+		[ -f "$f" ] && { 
+			in_accordance=1
+			break
+		}
+	done
+
+	[ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+	[ $verbosity ] && echo_n "    Stoping rpcbind daemon($pid): "
+	echo_n "    Stoping rpcbind daemon($pid): " >> "$LOGF"
+
+	kill -9 $pid 2>> "$LOGF" || {
+
+		[ $verbosity ] && echo "not possible"
+		echo "not possible" >> "$LOGF"
+		return $CODE_ERROR 
+	}
+
+	[ $verbosity ] && echo "ok"
+	echo "ok" >> "$LOGF"
+
+	[ $verbosity ] && echo "    Renaming files..."
+	echo "Renaming files..." >> "$LOGF"
+
+	for f in $files; do
+
+		mv -f $f $f.DISABLED 2>> "$LOGF" || return $CODE_ERROR 
+	done
+
+	return $CODE_OK 
+}
+
+SUBNAME[31]="Disable Sendmail daemon"
+SUBCODE[31]="4566"
+apply_31() {
+	
+	file=/etc/rc.config.d/mailservs
+	in_accordance=0
+
+	[ $verbosity ] && echo_n "    Checking presence of sendmail running: "
+	echo_n "Checking presence of sendmail running: " >> "$LOGF"
+	sendmail_running=`ps -ef | grep -v grep | grep sendmail 2>> "$LOGF"`
+
+	in_accordance=0
+	if [ -n "$sendmail_running" ]; then
+
+		[ $verbosity ] && echo "running..."
+		echo "running..." >> "$LOGF"
+		in_accordance=1
+	else
+
+		[ $verbosity ] && echo "not running..."
+		echo "not running..." >> "$LOGF"
+	fi
+
+	egrep -q "^[[:blank:]]*(export)?[[:blank:]]*SENDMAIL_SERVER[[:blank:]]*=[[:blank:]]*1" "$file" 
+	file_conf=$?
+
+	[ $file_conf -eq 0 ] && in_accordance=1
+	[ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+	
+	[ -n "$sendmail_running" ] && {
+
+		rollback_cmd="/sbin/init.d/sendmail start"
+		[ $verbosity ] && echo "    Stopping sendmail daemon..."
+		echo "Stopping sendmail daemon..." >> "$LOGF"
+
+		/sbin/init.d/sendmail stop >> "$LOGF" 2>&1
+
+		[ -d /etc/rc.config.d ] || {
+
+			mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || {
+			
+				return $CODE_ERROR 
+			}
+		}
+	}
+
+	if [ $file_conf -eq 0 ]; then
+
+		backupFile "$file" "data" '$rollback_cmd'
+		# change init scripts
+		setLine "$file" "^[[:blank:]]*(export )?SENDMAIL_SERVER=" "export SENDMAIL_SERVER=0" "^SENDMAIL_SERVER=0"
+		RET=$?
+
+		[ $? -eq $CODE_ERROR ] && return $CODE_ERROR 
+	else  
+
+		backupFile "" "perm" '$rollback_cmd'
+	fi
+
+	return $RET
+}
+
+SUBNAME[32]="Disable unnecessary inetd services"
+SUBCODE[32]="4563"
+apply_32() {
+
+	file=/etc/inetd.conf
+
+	# check if running inetd
+	proc=`ps -ef | grep inetd | grep -v grep | head -n 1 2>> "$LOGF"`
+
+	[ -n "$proc" ] || return $CODE_CONFORMITY 
+
+	# check if has sshd running
+	has_ssh=0
+	ps -ef | grep sshd | grep -v grep >> "$LOGF" 2>&1 && has_ssh=1
+
+	backupFile "$file" "data" 'inetd -c'
+	    
+  	[ -n "$BASE_INETD_DENY" ] && {
+
+    		echo "    Changing $file..."
+		for i in $BASE_INETD_DENY; do
+      
+			[ "$i" = "telnet" -a $has_ssh -eq 0 ] && {
+        
+				echo "    SSH daemon not found. Telnet will not be disabled."
+			  	continue
+		  	}
+		  
+                        apply_service="0"
+                        [ "$interactive" = "no" ] || {
+
+                        	yn "            [*] Service to be stopped: \"${i}\". Apply?"
+                        	apply_service="$?"
+                        }
+
+                        [ "$apply_service" -eq "1" ] && {
+
+                        	continue
+                        }
+
+			setLine "$file" "^[[:blank:]]*$i[[:blank:]]" "#"
+		  	[ $? -eq 1 ] && return $CODE_ERROR 
+	  	done
+	
+	  	echo_n "    Reloading inetd configuration: "
+	  	inetd -c 2>> "$LOGF" || {
+      		
+			echo "not possible"
+      			return $CODE_ERROR 
+    		}
+	       
+    		echo ok
+    		return $CODE_OK 
+  	}
+
+  	[ -n "$BASE_INETD_ALLOW" ] || {
+    
+		echo "    Variable BASE_INETD_ALLOW is empty."
+    		echo "    Disabling ALL inetd services..."
+  	}
+
+  	CHANGE=0
+  	for i in `awk '/^[aA-zZ0-9]/ { print $1 }' $file`; do
+    
+		[ "$i" = "telnet" -a $has_ssh -eq 0 ] && {
+      		
+			echo "    SSH daemon not found. Telnet will not be disabled."
+      			continue
+    		}
+    
+		OK=0
+    		for g in $BASE_INETD_ALLOW; do
+      
+			[ "$g" = "$i" ] && OK=1
+    		done
+
+    		[ $OK -eq 0 ] && {
+      
+                        apply_service="0"
+                        [ "$interactive" = "no" ] || {
+
+                        	yn "            [*] Service to be stopped: \"${g}\". Apply?"
+                        	apply_service="$?"
+                        }
+
+                        [ "$apply_service" -eq "1" ] && {
+
+                        	continue
+                        }
+
+			CHANGE=1
+      			setLine "$file" "^$i[[:blank:]]" "#"
+      			[ $? -eq 1 ] && return $CODE_ERROR 
+    		}
+  	done
+
+  	if [ $CHANGE -eq 1 ]; then
+    
+		echo_n "    Reloading inetd configuration: "
+    		inetd -c 2>> "$LOGF" || {
+      
+			echo "not possible"
+      			return $CODE_ERROR 
+    		}
+
+    		echo ok
+    		return $CODE_OK 
+  	else
+   
+		# nothing done
+   		return $CODE_CONFORMITY 
+  	fi
+}
+
+SUBNAME[33]="Enable Syslog daemon"
+SUBCODE[33]="4559"
+apply_33() {
+
+	setSyslogd
+	return
+
+}
+
+SUBNAME[34]="Disable printing service"
+SUBCODE[34]="4568"
+apply_34() {
+
+	file='/etc/rc.config.d/lp'
+	file2='/etc/rc.config.d/tps'
+  	in_accordance='0'
+
+	pid=`ps -ef | grep "lpsched" | grep -v grep | head -n 1 | awk '{ print $2 }' 2>> "$LOGF"`
+	[ -f "$file" ] && conf=`egrep "^[ \t]*LP[ \t]*=[ \t]*[1-9]+$" "$file"` && in_accordance='1'
+  	[ -f "$file2" ] && conf2=`egrep "^[ \t]*XPRINTSERVERS[ \t]*=[ \t]*" "$file2" | awk -F'=' '$2 !~ /["][ \t]*["]/ { print "vuln" }'` && in_accordance='1'
+
+  	[ "$in_accordance" -eq 0 ] && return ${CODE_CONFORMITY}
+
+  	backupFile "$file" "data" '/usr/sbin/lpsched &'
+  	backupFile "$file2" "data" 
+
+  	[ -n "$conf" ] && {
+    
+		setLine "$file" "^[[:blank:]]*LP=" "LP=0" "0"	
+    		[ "$?" -eq $CODE_ERROR ] && return $CODE_ERROR 
+  	}
+
+  	[ -n "$conf2" ] && {
+    
+		setLine "$file2" "^[[:blank:]]*XPRINTSERVERS[[:blank:]]*=" "XPRINTSERVERS=\"\"" ""	
+    		[ "$?" -eq $CODE_ERROR ] && return $CODE_ERROR 
+  	}
+
+  	[ -n "$pid" ] && {
+
+    		[ $verbosity ] && echo_n "    Stopping printing service($pid): "
+    		echo_n "    Stopping printing service($pid): " >> "$LOGF"
+
+    		kill -9 "$pid" 2>> "$LOGF" || {
+      
+			[ $verbosity ] && echo "not possible"
+      			echo "not possible" >> "$LOGF"
+      			return $CODE_ERROR 
+    		}
+
+    		[ $verbosity ] && echo "ok"
+    		echo ok 2>> "$LOGF"
+
+  	}
+
+	return $CODE_OK 
+}
+
+SUBNAME[35]="Set superuser's home directory"
+SUBCODE[35]="4598"
+apply_35() {
+
+	setHome "root" "/root"
+	return
+
+}
+
+SUBNAME[36]="Lock system users account"
+SUBCODE[36]="4597"
+apply_36() {
+	setNullpass
+	return
+}
+
+SUBNAME[37]="Convert the System to Trusted System"
+SUBCODE[37]="4574"
+apply_37() {
+
+  file=/etc/passwd
+	# check if already trusted
+	[ -s /tcb/files/auth/system/default ] && {
+		[ $verbosity ] && echo "Already Trusted System"
+		echo "Already Trusted System" >> "$LOGF"
+		return $CODE_CONFORMITY 
+	}
+
+  backupFile "$file" "perm" '/usr/lbin/tsconvert -r'
+	
+	[ $verbosity ] && echo "Converting to Trusted System"
+	echo "Converting to Trusted System" >> "$LOGF"
+
+	/usr/lbin/tsconvert
+	/usr/lbin/modprpw -V
+
+	return $CODE_OK
+}
+
+SUBNAME[38]="Disable rc services"
+SUBCODE[38]="4562"
+apply_38() {
+		
+	if [ -n "$BASE_RC_DENY" ]; then
+
+		for service in $BASE_RC_DENY; do
+
+                	apply_service="0"
+                	[ "$interactive" = "no" ] || {
+
+                		yn "            [*] Service to be stopped: \"${service}\". Apply?"
+                		apply_service="$?"
+                	}
+
+                	[ "$apply_service" -eq "1" ] && {
+
+                		continue
+                	}
+
+			eval "stop_$service"
+		done
+	else
+
+		return $CODE_CONFORMITY 
+	fi
+}
+
+SUBNAME[39]="Disable PMTU"
+SUBCODE[39]="4545"
+apply_39() {
+  file=/etc/rc.config.d/nddconf
+
+  [ -d /etc/rc.config.d ] || {
+    mkdir /etc/rc.config.d 2>> "$LOGF" && chmod 755 /etc/rc.config.d 2>> "$LOGF" || return $CODE_ERROR 
+  }
+
+  setNdd "$file" "ip" "ip_pmtu_strategy" "0"
+  return
+}
+
+SUBCODE[40]="4590"
+apply_40() {
+
+        local file='/etc/default/security'
+
+        [ -z "$BASE_EXP" ] && {
+
+                MISSED_VAR='BASE_EXP'
+                return ${CODE_MISSED_VAR}
+        }
+
+        local trusted_status=`check_trusted`
+        if [ "$trusted_status" = "1" ]; then
+
+                if [ ! -f "$file" ]; then
+
+                        touch "$file"
+                        bkp_cmd="rm -f $file"
+                        backupFile "" "perm" "$bkp_cmd"
+
+                        chmod 640 "$file"
+                        echo "PASSWORD_MAXDAYS=${BASE_EXP}" > "$file"
+                else
+
+                        local curr_value=`egrep -s "^[ \t]*PASSWORD_MAXDAYS[ \t]*=[ \t]*${BASE_EXP}" "$file"`
+                        if [ -n "$curr_value" ]; then
+
+                                return ${CODE_CONFORMITY}
+                        else
+
+                                curr_value=`egrep -s "^[ \t]*PASSWORD_MAXDAYS[ \t]*=[ \t]*[0-9]+" "$file" | awk -F'=' '{ print $2 }' | tail -n1`
+                                if [ -f '/usr/sbin/ch_rc' ]; then
+
+                                        ch_rc_bin='/usr/sbin/ch_rc'
+                                        if [ -z "$curr_value" ]; then
+
+                                                bkp_cmd=`$ch_rc_bin -r -p "PASSWORD_MAXDAYS" "$file"`
+                                        else
+
+                                                bkp_cmd=`$ch_rc_bin -a -p "PASSWORD_MAXDAYS=$curr_value" "$file"`
+                                        fi
+
+                                        backupFile "" "perm" "$bkp_cmd"
+                                        $ch_rc_bin -a -p "PASSWORD_MAXDAYS=$BASE_EXP" "$file" 2>>$LOG >>$LOG
+                                else
+
+                                        backupFile "$file" "data"
+                                        local temp_file=`mktemp /tmp/XXXXXXXXXXX`
+                                        cat "$file" | sed "s/^[ \t]\{0,\}PASSWORD_MAXDAYS[ \t]\{1,\}.*/PASSWORD_MAXDAYS=$BASE_EXP/g" > "$temp_file"
+                                        cat "$temp_file" > "$file"
+                                        rm -f "$temp_file"
+                                fi
+                        fi
+                fi
+        else
+
+                curr_value=`/usr/lbin/getprdef -m exptm | awk -F'=' '{ print $2 }'`
+                if [ -n "$curr_value" -a "$curr_value" = "$BASE_EXP" ]; then
+
+                        return ${CODE_CONFORMITY}
+                else
+
+                        bkp_cmd=`/usr/lbin/modprdef -m exptm=${curr_value}`
+                        backupFile "" "perm" "$bkp_cmd"
+
+                        /usr/lbin/modprdef -m exptm=${BASE_EXP} 2>>$LOG >>$LOG
+                        /usr/lbin/modprpw -V 2>>$LOG >>$LOG
+
+			[ -n "$BASE_USERS_PASSWORD_NOT_EXPIRE" ] && {
+
+				users=`echo $BASE_USERS_PASSWORD_NOT_EXPIRE | tr " " "\n" | sort -u`
+				for user in ${users}; do
+
+					cat /etc/passwd | awk -F: '{ print $1 }' | egrep -qs "^$user$" && {
+			
+						/usr/lbin/modprpw -k -m mintm=0,lftm=0,exptm=0,expwarn=0,acctexp=0 "$user" 2>/dev/null
+						/usr/lbin/modprpw -v "$user"
+					}
+				done
+			}
+
+                fi
+        fi
+
+        return ${CODE_OK}
+}
+
+SUBCODE[41]="4591"
+apply_41() {
+
+	[ -z "$BASE_LIFE" ] && {
+
+		MISSED_VAR="BASE_LIFE"
+		return $CODE_MISSED_VAR 
+	}
+
+
+  	test_trusted=`check_trusted`
+  	if [ "$test_trusted" = "1" ]; then
+
+        	echo "ERROR: System is not trusted"
+        	return $CODE_ERROR
+  	fi
+
+	/usr/lbin/modprdef -m lftm=$BASE_LIFE
+	/usr/lbin/modprpw -V
+
+	[ -n "$BASE_USERS_PASSWORD_NOT_EXPIRE" ] && {
+
+		users=`echo $BASE_USERS_PASSWORD_NOT_EXPIRE | tr " " "\n" | sort -u`
+		for user in ${users}; do
+
+			cat /etc/passwd | awk -F: '{ print $1 }' | egrep -qs "^$user$" && {
+			
+				/usr/lbin/modprpw -k -m mintm=0,lftm=0,exptm=0,expwarn=0,acctexp=0 "$user" 2>/dev/null
+				/usr/lbin/modprpw -v "$user"
+			}
+		done
+	}
+
+	return $CODE_OK
+}
+
+SUBCODE[42]="4592"
+apply_42() {
+
+  test_trusted=`check_trusted`
+  if [ "$test_trusted" -eq "0" ]; then
+
+	/usr/lbin/modprdef -m rstrpw=YES
+	/usr/lbin/modprpw -V
+        return
+  else
+
+        echo "ERROR: System is not trusted"
+        return $CODE_ERROR
+  fi
+}
+
+SUBCODE[43]="4603"
+apply_43 () {
+
+  [ -z "$BASE_RUMASK" ] && {
+    MISSED_VAR="BASE_RUMASK"
+    return $CODE_MISSED_VAR
+  }
+
+  root_home=`sed -n "/^root:/p" /etc/passwd | cut -d: -f6`
+  file="${root_home}/.profile"
+
+  [ -z "$root_home" ] && {
+    [ $verbosity ] && echo "    [-] Can't locate root home directory. Aborting correction for this item..."
+    echo "    [-] Can't locate root home directory. Aborting correction for this item..." >> "$LOGF"
+    return $CODE_ERROR 
+  }
+
+  directive="umask ${BASE_RUMASK}"
+  if [ -f "$file" ]; then
+
+    look_for="umask"
+
+    # found in lib/common
+    fix_irrestrict_su_umask "$file" "$directive" "$look_for"
+    RET=$?
+
+  else
+
+    security_session_add "$file"
+    security_session_add_directive "$directive" "$file"
+    RET=?
+
+  fi
+
+  return $RET
+
+
+
+}
+
+SUBCODE[44]="4572"
+apply_44 () {
+
+    #found in lib/common
+  fix_invalid_PATH
+
+  return
+
+}
+
+SUBCODE[45]="4588"
+apply_45 () {
+
+
+  #found in lib/common
+  fix_dns_spoofing
+  return
+
+}
+
+SUBCODE[46]="4586"
+apply_46 () {
+
+  #found in lib/HP-UX/include.sh
+  snmp_disable_default_communities
+  return
+}
+
+SUBCODE[48]="4352"
+apply_48 () {
+  #found in lib/HP-UX/include.sh
+  snmp_fix_managers
+  return
+}
+
+SUBCODE[47]="4548"
+apply_47 () {
+
+  test_trusted=`check_trusted`
+  if [ "$test_trusted" -eq "0" ]; then
+
+        #found in lib/HP-UX/include.sh
+  	fix_password_expiration_warning
+        return
+  else
+
+        echo "ERROR: System is not trusted"
+        return $CODE_ERROR
+  fi
+
+}
+
+SUBCODE[50]="4546"
+apply_50 () {
+
+	#found in lib/HP-UX/include.sh
+	fix_account_locking
+	return
+}
+
+set_var() {
+
+  [ $# -lt 3 ] && return $CODE_ERROR
+
+	file="$1"
+	var="$2"
+	value="$3"
+
+	setLine "$file" "^[[:blank:]]*$var" "$value"
+  return $?
+}
+
+SUBCODE[49]="4547"
+apply_49() {
+
+        local file="/usr/local/etc/sudoers"
+        set_syslog_in_sudoers "$file"
+        return
+}
+
+SUBCODE[51]="4702"
+apply_51() {
+
+        local file='/etc/default/security'
+
+        [ -z "$BASE_MINAGE" ] && {
+
+                MISSED_VAR='BASE_MINAGE'
+                return ${CODE_MISSED_VAR}
+        }
+
+        local trusted_status=`check_trusted`
+        if [ "$trusted_status" = "1" ]; then
+
+                if [ ! -f "$file" ]; then
+
+                        touch "$file"
+                        bkp_cmd="rm -f $file"
+                        backupFile "" "perm" "$bkp_cmd"
+
+                        chmod 640 "$file"
+                        echo "PASSWORD_MINDAYS=${BASE_MINAGE}" > "$file"
+                else
+
+                        local curr_value=`egrep -s "^[ \t]*PASSWORD_MINDAYS[ \t]*=[ \t]*${BASE_MINAGE}" "$file"`
+                        if [ -n "$curr_value" ]; then
+
+                                return ${CODE_CONFORMITY}
+                        else
+
+                                curr_value=`egrep -s "^[ \t]*PASSWORD_MINDAYS[ \t]*=[ \t]*[0-9]+" "$file" | awk -F'=' '{ print $2 }' | tail -n1`
+                                if [ -f '/usr/sbin/ch_rc' ]; then
+
+                                        ch_rc_bin='/usr/sbin/ch_rc'
+                                        if [ -z "$curr_value" ]; then
+
+                                                bkp_cmd=`$ch_rc_bin -r -p "PASSWORD_MINDAYS" "$file"`
+                                        else
+
+                                                bkp_cmd=`$ch_rc_bin -a -p "PASSWORD_MINDAYS=$curr_value" "$file"`
+                                        fi
+
+                                        backupFile "" "perm" "$bkp_cmd"
+                                        $ch_rc_bin -a -p "PASSWORD_MINDAYS=$BASE_MINAGE" "$file" 2>>$LOG >>$LOG
+                                else
+
+                                        backupFile "$file" "data"
+                                        local temp_file=`mktemp /tmp/XXXXXXXXXXX`
+                                        cat "$file" | sed "s/^[ \t]\{0,\}PASSWORD_MINDAYS[ \t]\{1,\}.*/PASSWORD_MINDAYS=$BASE_MINAGE/g" > "$temp_file"
+                                        cat "$temp_file" > "$file"
+                                        rm -f "$temp_file"
+                                fi
+                        fi
+                fi
+        else
+
+                curr_value=`/usr/lbin/getprdef -m mintm | awk -F'=' '{ print $2 }'`
+                if [ -n "$curr_value" -a "$curr_value" = "$BASE_MINAGE" ]; then
+
+                        return ${CODE_CONFORMITY}
+                else
+
+                        bkp_cmd=`/usr/lbin/modprdef -m mintm=${curr_value}`
+                        backupFile "" "perm" "$bkp_cmd"
+
+                        /usr/lbin/modprdef -m mintm=${BASE_MINAGE} 2>>$LOG >>$LOG
+                fi
+        fi
+
+        return ${CODE_OK}
+}
+
+
+
+SUBCODE[52]="4703"
+apply_52() {
+
+        local file='/etc/default/security'
+
+        [ -z "$BASE_UPPER_CHARS" ] && {
+
+                MISSED_VAR='BASE_UPPER_CHARS'
+                return ${CODE_MISSED_VAR}
+        }
+
+        if [ ! -f "$file" ]; then
+
+                touch "$file"
+                bkp_cmd="rm -f $file"
+                backupFile "" "perm" "$bkp_cmd"
+
+                chmod 640 "$file"
+                echo "PASSWORD_MIN_UPPER_CASE_CHARS=${BASE_UPPER_CHARS}" > "$file"
+        else
+
+                local curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_UPPER_CASE_CHARS[ \t]*=[ \t]*${BASE_UPPER_CHARS}" "$file"`
+                if [ -n "$curr_value" ]; then
+
+                        return ${CODE_CONFORMITY}
+                else
+
+                        curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_UPPER_CASE_CHARS[ \t]*=[ \t]*[0-9]+" "$file" | awk -F'=' '{ print $2 }' | tail -n1`
+                        if [ -f '/usr/sbin/ch_rc' ]; then
+
+                                ch_rc_bin='/usr/sbin/ch_rc'
+                                if [ -z "$curr_value" ]; then
+
+                                        bkp_cmd=`$ch_rc_bin -r -p "PASSWORD_MIN_UPPER_CASE_CHARS" "$file"`
+                                else
+
+                                        bkp_cmd=`$ch_rc_bin -a -p "PASSWORD_MIN_UPPER_CASE_CHARS=$curr_value" "$file"`
+                                fi
+
+                                backupFile "" "perm" "$bkp_cmd"
+                                $ch_rc_bin -a -p "PASSWORD_MIN_UPPER_CASE_CHARS=$BASE_UPPER_CHARS" "$file"
+                        else
+
+                                backupFile "$file" "data"
+                                local temp_file=`mktemp /tmp/XXXXXXXXXXX`
+                                cat "$file" | sed "s/^[ \t]\{0,\}PASSWORD_MIN_UPPER_CASE_CHARS[ \t]\{0,\}.*/PASSWORD_MIN_UPPER_CASE_CHARS=$BASE_UPPER_CHARS/g" > "$temp_file"
+                                cat "$temp_file" > "$file"
+                                rm -f "$temp_file"
+                        fi
+                fi
+        fi
+
+        return ${CODE_OK}
+}
+
+SUBCODE[53]="4704"
+apply_53() {
+
+        local file='/etc/default/security'
+
+        [ -z "$BASE_LOWER_CHARS" ] && {
+
+                MISSED_VAR='BASE_LOWER_CHARS'
+                return ${CODE_MISSED_VAR}
+        }
+
+        if [ ! -f "$file" ]; then
+
+                touch "$file"
+                bkp_cmd="rm -f $file"
+                backupFile "" "perm" "$bkp_cmd"
+
+                chmod 640 "$file"
+                echo "PASSWORD_MIN_LOWER_CASE_CHARS=${BASE_LOWER_CHARS}" > "$file"
+        else
+
+                local curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_LOWER_CASE_CHARS[ \t]*=[ \t]*${BASE_LOWER_CHARS}" "$file"`
+                if [ -n "$curr_value" ]; then
+
+                        return ${CODE_CONFORMITY}
+                else
+
+                        curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_LOWER_CASE_CHARS[ \t]*=[ \t]*[0-9]+" "$file" | awk -F'=' '{ print $2 }' | tail -n1`
+                        if [ -f '/usr/sbin/ch_rc' ]; then
+
+                                ch_rc_bin='/usr/sbin/ch_rc'
+                                if [ -z "$curr_value" ]; then
+
+                                        bkp_cmd=`$ch_rc_bin -r -p "PASSWORD_MIN_LOWER_CASE_CHARS" "$file"`
+                                else
+
+                                        bkp_cmd=`$ch_rc_bin -a -p "PASSWORD_MIN_LOWER_CASE_CHARS=$curr_value" "$file"`
+                                fi
+
+                                backupFile "" "perm" "$bkp_cmd"
+                                $ch_rc_bin -a -p "PASSWORD_MIN_LOWER_CASE_CHARS=$BASE_LOWER_CHARS" "$file"
+                        else
+
+                                backupFile "$file" "data"
+                                local temp_file=`mktemp /tmp/XXXXXXXXXXX`
+                                cat "$file" | sed "s/^[ \t]\{0,\}PASSWORD_MIN_LOWER_CASE_CHARS[ \t]\{0,\}.*/PASSWORD_MIN_LOWER_CASE_CHARS=$BASE_LOWER_CHARS/g" > "$temp_file"
+                                cat "$temp_file" > "$file"
+                                rm -f "$temp_file"
+                        fi
+                fi
+        fi
+
+        return ${CODE_OK}
+}
+
+
+SUBCODE[54]="4705"
+apply_54() {
+
+        local file='/etc/default/security'
+
+        [ -z "$BASE_MINDIGIT" ] && {
+
+                MISSED_VAR='BASE_MINDIGIT'
+                return ${CODE_MISSED_VAR}
+        }
+
+        if [ ! -f "$file" ]; then
+
+                touch "$file"
+                bkp_cmd="rm -f $file"
+                backupFile "" "perm" "$bkp_cmd"
+
+                chmod 640 "$file"
+                echo "PASSWORD_MIN_DIGIT_CHARS=${BASE_MINDIGIT}" > "$file"
+        else
+
+                local curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_DIGIT_CHARS[ \t]*=[ \t]*${BASE_MINDIGIT}" "$file"`
+                if [ -n "$curr_value" ]; then
+
+                        return ${CODE_CONFORMITY}
+                else
+
+                        curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_DIGIT_CHARS[ \t]*=[ \t]*[0-9]+" "$file" | awk -F'=' '{ print $2 }' | tail -n1` 
+                        if [ -f '/usr/sbin/ch_rc' ]; then
+
+                                ch_rc_bin='/usr/sbin/ch_rc'
+                                if [ -z "$curr_value" ]; then
+
+                                        bkp_cmd=`$ch_rc_bin -r -p "PASSWORD_MIN_DIGIT_CHARS" "$file"`
+                                else
+
+                                        bkp_cmd=`$ch_rc_bin -a -p "PASSWORD_MIN_DIGIT_CHARS=$curr_value" "$file"`
+                                fi
+
+                                backupFile "" "perm" "$bkp_cmd"
+                                $ch_rc_bin -a -p "PASSWORD_MIN_DIGIT_CHARS=$BASE_MINDIGIT" "$file"
+                        else
+
+                                backupFile "$file" "data"
+                                local temp_file=`mktemp /tmp/XXXXXXXXXXX`
+                                cat "$file" | sed "s/^[ \t]\{0,\}PASSWORD_MIN_DIGIT_CHARS[ \t]\{0,\}.*/PASSWORD_MIN_DIGIT_CHARS=$BASE_MINDIGIT/g" > "$temp_file"
+                                cat "$temp_file" > "$file"
+                                rm -f "$temp_file"
+                        fi
+                fi
+        fi
+
+        return ${CODE_OK}
+}
+
+SUBCODE[55]="4701"
+apply_55() {
+
+        local file='/etc/default/security'
+
+        [ -z "$BASE_MINOTHER" ] && {
+
+                MISSED_VAR='BASE_MINOTHER'
+                return ${CODE_MISSED_VAR}
+        }
+
+        if [ ! -f "$file" ]; then
+
+                touch "$file"
+                bkp_cmd="rm -f $file"
+                backupFile "" "perm" "$bkp_cmd"
+
+                chmod 640 "$file"
+                echo "PASSWORD_MIN_SPECIAL_CHARS=${BASE_MINOTHER}" > "$file"
+        else
+
+                local curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_SPECIAL_CHARS[ \t]*=[ \t]*${BASE_MINOTHER}" "$file"`
+                if [ -n "$curr_value" ]; then
+
+                        return ${CODE_CONFORMITY}
+                else
+
+                        curr_value=`egrep -s "^[ \t]*PASSWORD_MIN_SPECIAL_CHARS[ \t]*=[ \t]*[0-9]+" "$file" | awk -F'=' '{ print $2 }' | tail -n1`
+                        if [ -f '/usr/sbin/ch_rc' ]; then
+
+                                ch_rc_bin='/usr/sbin/ch_rc'
+                                if [ -z "$curr_value" ]; then
+
+                                        bkp_cmd=`$ch_rc_bin -r -p "PASSWORD_MIN_SPECIAL_CHARS" "$file"`
+                                else
+
+                                        bkp_cmd=`$ch_rc_bin -a -p "PASSWORD_MIN_SPECIAL_CHARS=$curr_value" "$file"`
+                                fi
+
+                                backupFile "" "perm" "$bkp_cmd"
+                                $ch_rc_bin -a -p "PASSWORD_MIN_SPECIAL_CHARS=$BASE_MINOTHER" "$file"
+                        else
+
+                                backupFile "$file" "data"
+                                local temp_file=`mktemp /tmp/XXXXXXXXXXX`
+                                cat "$file" | sed "s/^[ \t]\{0,\}PASSWORD_MIN_SPECIAL_CHARS[ \t]\{0,\}.*/PASSWORD_MIN_SPECIAL_CHARS=$BASE_MINOTHER/g" > "$temp_file"
+                                cat "$temp_file" > "$file"
+                                rm -f "$temp_file"
+                        fi
+                fi
+        fi
+
+        return ${CODE_OK}
+}
+
+
+running_rpcbind() {
+	pid=`ps -ef | grep "rpcbind" | grep -v grep | head -n 1 | awk '{ print $2 }'`
+	[ -n "$pid" ] && return $CODE_ERROR 
+	return $CODE_OK 
+}
+
+stop_nis() {
+
+	file=/etc/rc.config.d/namesvrs
+	vars="NIS_MASTER_SERVER  NIS_SLAVE_SERVER  NIS_CLIENT NISPLUS_CLIENT NISPLUS_SERVER"
+
+  # check if running
+
+    running_rpcbind || return "$CODE_CONFORMITY" 
+
+	pid_keyserver=`ps -ef | grep "keyserv" | grep -v grep | head -n 1 | awk '{ print $2 }' 2>> "$LOGF"`
+
+	[ -n "$pid_keyserver" ] || return "$CODE_CONFORMITY" 
+
+	kill -9 $pid_keyserver 2>> "$LOGF"
+
+  pid_ypbind=`ps -ef | grep "ypbind" | grep -v grep | head -n 1 | awk '{ print $2 }' 2>> "$LOGF"`
+ 
+	[ -n "$pid_ypbind" ] || return "$CODE_CONFORMITY" 
+
+	kill -9 $pid_ypbind 2>> "$LOGF"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	for var in $vars; do
+		set_var "$file" "$var" "$var=0"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+	done
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+}
+
+ 
+stop_lp() {
+	file=/etc/rc.config.d/lp
+	vars="LP"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$vars" "$vars=0"
+  RET=$?
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $RET
+
+}
+
+stop_cde() {
+	file=/etc/rc.config.d/desktop
+	vars="DESKTOP"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+  set_var "$file" "$vars" "$vars=\"\""
+  RET=$?
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $RET
+}
+
+stop_sendmail() {
+	apply_31
+} 
+
+stop_snmp() {
+	cmds="/sbin/init.d/SnmpFddi4 /sbin/init.d/SnmpMaster /sbin/init.d/SnmpTrpDst /sbin/init.d/SnmpHpunix /sbin/init.d/SnmpMib2"
+
+	for cmd in $cmds; do
+		[ -x "$cmd" ] && {
+      $cmd stop >> "$LOGF"
+      [ $? -eq 1 ] && return $CODE_ERROR
+    }
+	done	
+
+  target_files=""
+  in_accordance=0
+
+  grep -q "^[ \t]*SNMP_HPUNIX_START[ \t]*=[ \t]*0" "/etc/rc.config.d/SnmpHpunix" || {
+    in_accordance=1
+    target_files="${target_files} /etc/rc.config.d/SnmpHpunix"
+  }
+
+  grep -q "^[ \t]*SNMP_MASTER_START[ \t]*=[ \t]*0" "/etc/rc.config.d/SnmpMaster" || {
+    in_accordance=1
+    target_files="${target_files} /etc/rc.config.d/SnmpMaster"
+  }
+
+  grep -q "^[ \t]*SNMP_MIB2_START[ \t]*=[ \t]*0" "/etc/rc.config.d/SnmpMib2" || {
+    in_accordance=1
+    target_files="${target_files} /etc/rc.config.d/SnmpMib2"
+  }
+
+  grep -q "^[ \t]*SNMP_TRAPDEST_START[ \t]*=[ \t]*0" "/etc/rc.config.d/SnmpTrpDst" || {
+    in_accordance=1
+    target_files="${target_files} /etc/rc.config.d/SnmpTrpDst"
+  }
+
+  [ $in_accordance -eq 0 ] && return $CODE_CONFORMITY
+
+	backupFile "$target_files" "data"
+
+  for f in $target_files; do
+
+    case "$f" in
+      "/etc/rc.config.d/SnmpHpunix")
+        set_var "/etc/rc.config.d/SnmpHpunix" "SNMP_HPUNIX_START" "SNMP_HPUNIX_START=0"
+        [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+      ;;
+
+      "/etc/rc.config.d/SnmpMaster")
+        set_var "/etc/rc.config.d/SnmpMaster" "SNMP_MASTER_START" "SNMP_MASTER_START=0"
+        [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+      ;;
+
+      "/etc/rc.config.d/SnmpMib2")
+        set_var "/etc/rc.config.d/SnmpMib2"   "SNMP_MIB2_START"   "SNMP_MIB2_START=0"
+        [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+      ;;
+
+      "/etc/rc.config.d/SnmpTrpDst")
+        set_var "/etc/rc.config.d/SnmpTrpDst" "SNMP_TRAPDEST_START" "SNMP_TRAPDEST_START=0"
+        [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+      ;;
+    esac
+  done
+
+  return $CODE_OK
+}
+
+stop_boot() {
+	cmd=/sbin/init.d/snaplus2
+	file=/etc/rc.config.d/snaplus2
+	vars="START_SNAPLUS START_SNANODE START_SNAINETD"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+  for var in $vars; do
+    set_var "$file" "$var" "$var=0"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  done
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+}
+
+ 
+stop_netdaemons() {
+	cmd=/sbin/init.d/xntpd
+	file=/etc/rc.config.d/netdaemons
+	vars="MROUTED RWHOD DDFA START_RBOOTD"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+	backupFile "$file" "data"
+
+	for var in $vars; do
+    set_var "$file" "$var" "$var=0"
+  done
+}
+
+
+#
+# TODO! TODO! TODO!
+# discover the command to stop service :/
+#  
+stop_dfs() {
+	file=/etc/rc.config.d/dfs
+	vars="DCE_KRPC DFS_CORE DFS_CLIENT DFS_SERVER DFS_EPISODE EPIINIT DFSEXPORT BOSSERVER DFSBIND FXD MEMCACHE DFSGWD DISKCACHEFORDFS"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+		
+	for var in $vars; do
+		set_var "$file" "$var" "$var=0"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+ 	done
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+}
+
+stop_netconf() {
+	cmd="/etc/init.d/rarpd"
+	file=/etc/rc.config.d/netconf
+	vars="RARPD RDPD"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	for var in $vars; do
+		set_var "$file" "$var" "$var=0"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+	done
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+}
+ 
+
+stop_ptydaemon() {
+	cmd=/etc/init.d/ptydaemon
+	file=/etc/rc.config.d/ptydaemon
+	var="PTYDAEMON_START"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+
+
+stop_vt() {
+	cmd=/etc/init.d/vt
+	file=/etc/rc.config.d/vt
+	var="VTDAEMON_START"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+
+stop_named() {
+	cmd=/etc/init.d/named
+	file=/etc/rc.config.d/namesvrs
+	var="NAMED"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+	
+stop_peersnmpd() {
+	file=/etc/rc.config.d/peer.snmpd
+	var="PEER_SNMPD_START" 
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+
+
+stop_lsserv() {
+	cmd=/opt/ifor/bin/i4stop
+	file=/etc/rc.config.d/i4lmd
+	var="START_I4LMD"
+
+	[ -x "$cmd" ] && {
+    $cmd >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+	
+}
+
+stop_xfs() {
+	cmd=/etc/init.d/xfs
+	file=/etc/rc.config.d/xfs
+	var="RUN_X_FONT_SERVER"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+
+
+stop_audio() {
+	cmd=/etc/init.d/audio
+	file=/etc/rc.config.d/audio
+	var="AUDIO_SERVER"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+
+stop_slsd() {
+	cmd=/etc/init.d/slsd
+	file=/etc/rc.config.d/slsd
+	var="SLSD_DAEMON"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+ 
+
+stop_samba() {
+	cmd=/etc/init.d/samba
+	file=/etc/rc.config.d/samba
+	var="RUN_SAMBA"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+
+}
+  
+stop_cifsclient() {
+	file=/etc/rc.config.d/cifsclient
+	var="RUN_CIFSCLIENT"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+}
+ 
+stop_fasttrack() {
+	file=/etc/rc.config.d/ns-ftrack
+	var="NS_FTRACK"
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+ 
+stop_nfs() {
+	cmds="/etc/init.d/nfs.client /etc/init.d/nfs.core /etc/init.d/nfs.server"
+	file=/etc/rc.config.d/nfsconf
+	vars="NFS_SERVER NFS_CLIENT NUM_NFSD NUM_NFSIOD"
+
+	[ -f "/sbin/rc2.d/S400nfs.core" ] && mv -f /sbin/rc2.d/S400nfs.core /sbin/rc2.d/s400nfs.core.DISABLED 2>> "$LOGF"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+}
+
+stop_apache() {
+	cmds="/etc/init.d/apache /etc/init.d/apacheclt /etc/init.d/httpd_public"
+	file=/etc/rc.config.d/apacheconf
+	var="APACHE_START"
+
+	[ -x "$cmd" ] && {
+    $cmd stop >> "$LOGF"
+    [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+  }
+
+  file_exists=1
+  [ -f "$file" ] && {
+    file_exists=0
+    backupFile "$file" "data"
+  }
+
+	set_var "$file" "$var" "$var=0"
+  [ $? -eq $CODE_ERROR ] && return $CODE_ERROR
+
+  [ $file_exists -eq 1 ] && backupFile "" "perm" "rm $file"
+
+  return $CODE_OK
+
+
+}

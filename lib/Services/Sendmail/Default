@@ -1,0 +1,376 @@
+#!/bin/bash
+
+
+BASE_IDS="1 2 3 4 5 6 7 8"
+
+
+
+TRUE=1
+FALSE=0
+
+
+
+#
+# Look for some value inside some config key
+# 
+# Input: SmFindValue "Keyname" "Value"
+# Output: TRUE or FALSE
+#
+# Example: SmFindValue "DontBlameSendmail" "safe"
+#
+SmFindValue () {
+
+  [ $# -lt 2 ] && return $CODE_ERROR
+ 
+
+  [ -z "$sendmailFile" ] && {
+		MISSED_VAR="sendmailFile"
+		return $CODE_MISSED_VAR
+  }
+
+  [ ! -f $sendmailFile ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+  }
+
+  local value=`echo $2|sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/'`
+
+
+  local search=`sed -n "/^$BLANK_SED\{0,\}O/s/^$BLANK_SED\{0,\}O$BLANK_SED\{1,\}//p" $sendmailFile | sed "s/\(.\{0,\}\)$BLANK_SED\{0,\}#.\{1,\}$/\1/" | sed "s/$BLANK_SED\{0,\}=$BLANK_SED\{0,\}/=/" | awk -F= -v KEY="$1" '$1 == KEY { print $2 }' | sed "s/$BLANK_SED\{0,\},$BLANK_SED\{0,\}/,/" | sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' | awk -F, -v VALUE="$value" '{ for (i=1;i<=NF;i++) { if ($i == VALUE) { print "found"; break } } }'`
+
+#  local command="sed -n '/^[ \\t]\\{0,\\}O/s/^[ \\t]\\{0,\\}O[ \\t]\\{1,\\}//p' \$sendmailFile | sed 's/\\(.\\{0,\\}\\)[ \\t]\\{0,\\}#.\\{1,\\}$/\\1/' | sed 's/[ \\t]\\{0,\\}=[ \\t]\\{0,\\}/=/' | awk -F= ' \$1 == \"$1\" { print \$2 }' | sed 's/[ \\t]\\{0,\\},[ \\t]\\{0,\\}/,/' | sed 'y/ABCDEFGHIJKLMNOPQRSTUVWXYZ/abcdefghijklmnopqrstuvwxyz/' | awk -F, '{ for (i=1;i<=NF;i++) { if (\$i == \"$value\") { print \"found\"; break } } }'"
+	
+#	local search=$(eval "$command")
+
+	if [ "$search" = "found" ]; then
+	  return $TRUE
+	else
+	  return $FALSE
+	fi
+
+}
+
+#
+# Inserts some value into a key if it doesn't exist 
+#
+# Input: SmInsertValue "Keyname" "Value"
+# 
+# Example: SmInsertValue "DontBlameSendmail" "safe"
+#
+#
+SmInsertValue () {
+    [ $# -lt 2 ] && return $CODE_ERROR
+  
+	[ -z "$sendmailFile" ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+    } 
+ 
+    [ ! -f $sendmailFile ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+    }
+ 
+    SmFindValue "$1" "$2"
+	local busca=$?
+	
+	if [ $busca = $FALSE ]; then
+    local command=""
+		
+    #
+    # -n shows line number
+    #
+		local busca1=`sed -n "/^$BLANK_SED\{0,\}O$BLANK_SED\{0,\}$1$BLANK_SED\{0,\}=$BLANK_SED\{0,\}[A-Za-z,]\{1,\}/=" $sendmailFile 2>>/dev/null`
+		local busca2=`sed -n "/^$BLANK_SED\{0,\}O$BLANK_SED\{0,\}$1$BLANK_SED\{0,\}=$BLANK_SED\{0,\}\$/=" $sendmailFile 2>>/dev/null`
+		local busca3=`sed -n "/^$BLANK_SED\{0,\}#\{1,\}$BLANK_SED\{0,\}O$BLANK_SED\{0,\}$1/=" $sendmailFile 2>>/dev/null`
+
+
+	# First case:   key exists, but value isn't in it
+    if [ "$busca1" != "" ]; then
+		# insert value at end of key.
+      local lineNum=`printf "$busca1" | head -n1`
+    	command="sed '$lineNum s/.\$/&,$2/' $sendmailFile >> $sendmailFile.tmp.$$"
+
+    # Second case:  key exists, but it's blank
+	elif [ "$busca2" != "" ]; then
+		  # insert key at the end.
+      local lineNum=`printf "$busca2" | head -n1`
+			command="sed '$lineNum s/.\$/&$2/' $sendmailFile  >> $sendmailFile.tmp.$$"
+
+    # Third case:   key exists, but it's commented out
+    elif [ "$busca3" != "" ]; then
+
+		  # insert key=value after the commented line
+      local lineNum=`printf "$busca3" | head -n1`
+			command="sed \"$lineNum a\\\\
+O $1 = $2\" $sendmailFile >> $sendmailFile.tmp.$$"
+
+    # Fourth case:  key doesn't exist at all!
+    else
+			# appends key=value into file
+			command="cat $sendmailFile > $sendmailFile.tmp.$$; echo O $1 = $2 >> $sendmailFile.tmp.$$"
+
+    fi # end of nested ifs! :)                                             
+
+		# Run the command
+		echo "      Inserting value $2 into key $1 in $sendmailFile" >> "$LOGF"
+		command="$command 2>> $LOGF"
+
+		eval "$command"                                                 
+		 
+
+		# Returns OK if command is executed sucessfully,  or ERROR
+		if [ $? -eq 0 ]; then                                                                   
+			cat $sendmailFile.tmp.$$ > $sendmailFile
+			rm -f $sendmailFile.tmp.$$
+			return $CODE_OK
+		else
+			return $CODE_ERROR
+	  fi
+
+
+  # Ja existe o que procuramos
+	elif [ $busca = $TRUE ]; then
+  	return $CODE_CONFORMITY
+	
+	# Erro ao inserir!
+	else
+		return $CODE_ERROR
+
+  fi # end of first if
+
+	
+	return $CODE_ERROR
+}
+
+
+
+
+
+#
+# Check key $1 for value $2.
+# If $2 isn't in $1, the function adds it!
+#
+SmCheckKeyAddValue () {
+  [ -z "$sendmailFile" ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+  }
+
+  [ ! -f $sendmailFile ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+  }
+
+
+  SmFindValue "$1" "$2"
+  local search=$?
+
+	if [ $search = $FALSE ]; then
+		backupFile "$sendmailFile" "data"
+		SmInsertValue "$1" "$2"
+		return $?
+	elif [ $search = $TRUE ]; then
+		return $CODE_CONFORMITY
+	fi
+
+ 	return $CODE_ERROR
+}
+
+
+
+#
+# Set some key to specified value
+#
+# Input: SmSetValue "Keyname" "Value"
+# 
+# Example: SmSetValue "DontBlameSendmail" "safe"
+#
+#
+SmSetValue () {
+  [ $# -lt 2 ] && return $CODE_ERROR
+  
+	[ -z "$sendmailFile" ] && {
+		MISSED_VAR="sendmailFile"
+		return $CODE_MISSED_VAR
+  }
+ 
+  [ ! -f $sendmailFile ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+  }
+
+  # Search key in non-commented lines
+	local busca1=`grep -n "^$BLANK_SED\{0,\}O$BLANK_SED\{0,\}$1" $sendmailFile 2>/dev/null |head -n1|cut -d':' -f1`
+
+	# Search key in commented lines 
+	local busca2=`grep -n "^$BLANK_SED\{0,\}#\{1,\}$BLANK_SED\{0,\}O$BLANK_SED\{0,\}$1" $sendmailFile 2>/dev/null |head -n1|cut -d':' -f1`
+
+	local command=""
+	if [ "$busca1" != "" ]; then
+		local lineNum=$busca1
+		command="sed '$lineNum s/$BLANK_SED\{0,\}=$BLANK_SED\{0,\}.\{0,\}$/ = $2/' $sendmailFile > $sendmailFile.tmp.$$"
+	elif [ "$busca2" != "" ]; then
+		local lineNum=$busca2
+    command="sed \"$lineNum a\\\\
+O $1 = $2\" $sendmailFile > $sendmailFile.tmp.$$"
+	else
+		command="cat $sendmailFile > $sendmailFile.tmp.$$; echo O $1 = $2 >> $sendmailFile.tmp.$$"
+  fi
+
+
+	# Runs the command
+	backupFile "$sendmailFile" "data"
+	echo "      Setting $1 = $2 in $sendmailFile" >> "$LOGF"
+	command="$command 2>> $LOGF"
+
+	eval "$command"
+        rcode=$?
+
+        cat $sendmailFile.tmp.$$ > $sendmailFile
+        rm -f $sendmailFile.tmp.$$
+
+	if [ $rcode -eq 0 ]; then
+		return $CODE_OK
+	else
+		return $CODE_ERROR
+  fi
+
+}
+
+
+
+
+
+
+
+SUBCODE[1]="6407"
+apply_1 () {
+	SmCheckKeyAddValue "DontBlameSendmail" "safe"
+  return $?
+}
+
+
+
+SUBCODE[2]="6404"
+apply_2 () {
+	SmCheckKeyAddValue "PrivacyOptions" "restrictqrun"
+  return $?
+}
+ 
+
+SUBCODE[3]="6405"
+apply_3 () {
+	SmCheckKeyAddValue "PrivacyOptions" "restrictmailq"
+  return $?
+}
+ 
+
+SUBCODE[4]="6401"
+apply_4 () {
+	SmCheckKeyAddValue "PrivacyOptions" "novrfy"
+  return $?
+}
+ 
+
+SUBCODE[5]="6402"
+apply_5 () {
+	SmCheckKeyAddValue "PrivacyOptions" "noexpn"
+  return $?
+}
+
+
+SUBCODE[6]="6406"
+apply_6 () {
+ 
+	local permissions
+	permissions=$(ls -l /var/spool|awk '($NF == "mqueue") { print $1 }')
+
+  if [ ! -d "/var/spool/mqueue" ]; then
+		MISSED_FILE="/var/spool/mqueue"
+		return $CODE_MISSED_FILE
+	fi
+
+	local conformity=`echo $permissions | awk 'match($1,"^d...-----[-Tt]") { print "safe" }'`
+
+  if [ "$conformity" = "safe" ]; then
+		return $CODE_CONFORMITY
+	fi
+
+	# Fix permissions
+	backupFile "/var/spool/mqueue" "perm"
+	echo "      Changing permissions of /var/spool/mqueue to 0700" >> "$LOGF"
+	chmod a-st /var/spool/mqueue	
+	chmod 0700 /var/spool/mqueue
+	
+}
+
+SUBCODE[7]="6403" 
+apply_7 () {
+  local SmtpGreetingMessage=$(sed -n "/^O/s/^O$BLANK_SED\{1,\}//p" $sendmailFile | sed "s/\(.\{0,\}\)$BLANK_SED\{0,\}#.\{1,\}\$/\1/" | sed "s/$BLANK_SED\{0,\}=$BLANK_SED\{0,\}/=/" | awk -F= ' $1 == "SmtpGreetingMessage" { print $2 }')
+	local ExistsGreeting=$(sed -n "/^O/s/^O$BLANK_SED\{1,\}//p" $sendmailFile | sed "s/\(.\{0,\}\)$BLANK_SED\{0,\}#.\{1,\}$/\1/" | sed "s/$BLANK_SED\{0,\}=$BLANK_SED\{0,\}/=/" | awk -F= ' $1 == "SmtpGreetingMessage" { print "ok" }')
+	
+	if [ "$SmtpGreetingMessage" != "" ] ||  [ "$ExistsGreeting" != "ok" ]; then
+        # Backup is made inside SmSetValue
+		SmSetValue "SmtpGreetingMessage" ""
+	else
+		return $CODE_CONFORMITY
+	fi
+}
+
+
+SUBCODE[8]="6409"
+apply_8 () {
+ 	[ -z "$sendmailFile" ] && {
+		MISSED_VAR="sendmailFile"
+		return $CODE_MISSED_VAR
+  }
+ 
+  [ ! -f $sendmailFile ] && {
+		MISSED_FILE="$sendmailFile"
+		return $CODE_MISSED_FILE
+  }
+ 
+	local HelpFile
+	local fileLength
+
+	local HelpFile=`sed "/^$BLANK_SED\{0,\}#/d" $sendmailFile | sed -n "/$BLANK_SED\{0,\}O$BLANK_SED\{1,\}HelpFile/p" | sed "s/$BLANK_SED\{0,\}=$BLANK_SED\{0,\}/=/" | awk -F= '{ print $2 }'`
+
+	local HelpFileSize="`ls -l $HelpFile|awk '{ print $5 }'`"
+
+  # If Helpfile is /etc/mail/helpfile, it exists and its size is <= 1, it's ok
+	[ "$HelpFile" = "/etc/mail/helpfile" ] && [ -f "$HelpFile"  ] && [ $HelpFileSize -le 1 ] && return $CODE_CONFORMITY 
+
+
+	#
+  # Here we need to create /etc/mail/helpfile and set
+  # HelpFile to /etc/mail/helpfile
+  # 
+
+	# If file exists, backup it
+	if [ -f "/etc/mail/helpfile" ]; then
+		backupFile "/etc/mail/helpfile" "data"
+	# If file doesn't exist, it will be removed in rollback
+	else
+		backupFile "" "perm" "rm -rf /etc/mail/helpfile"
+	fi
+
+  #
+  # Erase contents of /etc/mail/helpfile or create
+  # it if it doesn't exist. Better than 'touch'.
+  #
+	echo "      Creating blank /etc/mail/helpfile" >> "$LOGF"
+	echo "" > /etc/mail/helpfile
+
+
+
+
+  #
+  # Set value of HelpFile to /etc/mail/helpfile
+  #
+	SmSetValue "HelpFile" "\/etc\/mail\/helpfile"
+
+}
+
+
+                                                                                           

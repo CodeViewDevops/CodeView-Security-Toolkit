@@ -1,0 +1,8 @@
+NAME_8300="Verificacao de validade de email habilitada"
+RISK_8300="Medio"
+NAME_8301="Servidor permite relay de dominios nao autorizados"
+RISK_8301="Critico"
+NAME_8302="Visualizacao da fila de emails irrestrita"
+RISK_8302="Alto"
+NAME_8304="Versao desatualizada"
+RISK_8304="Critico"
